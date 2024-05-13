@@ -29,7 +29,8 @@ namespace UnlockServer
         {
             InitializeComponent();
             this.Load += Form1_Load; 
-
+            var softwareVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version.ToString();
+            this.Text = "蓝牙解锁工具_v" + softwareVersion;
             this.notifyIcon1.Visible = true;
             this.FormClosing += Form1_FormClosing;
             this.FormClosed += Form1_FormClosed;
@@ -409,7 +410,52 @@ namespace UnlockServer
         private int locktimecount = 0; 
         private bool isunlockfail = false;
 
-        private object lockLock = new object(); 
+        private object lockLock = new object();
+
+        /// <summary>
+        /// 锁定超时，默认60秒最多锁定一次，防止找不到设备重复锁定导致电脑无法解锁
+        /// </summary>
+        private TimeSpan LockTimeOut = TimeSpan.FromMilliseconds(60 * 1000);
+
+        /// <summary>
+        /// 解锁超时，默认60秒最多解锁一次
+        /// </summary>
+        private TimeSpan UnLockTimeOut = TimeSpan.FromMilliseconds(30 * 1000);
+
+        DateTime lastLockTime = DateTime.MinValue;
+        DateTime lastUnLockTime = DateTime.MinValue;
+
+        /// <summary>
+        /// 超时锁定
+        /// </summary>
+        private void LockByTimeOut()
+        {
+            DateTime now = DateTime.Now;
+
+            if((now - lastLockTime) > LockTimeOut )
+            {
+                //这里判断时间是否超过 LockTimeOut
+                lastLockTime = DateTime.Now;
+                WanClient.LockPc();
+            }  
+        }
+
+        /// <summary>
+        /// 超时锁定
+        /// </summary>
+        private bool UnLockByTimeOut()
+        {
+            DateTime now = DateTime.Now;
+
+            if ((now - lastUnLockTime) > UnLockTimeOut)
+            {
+                //这里判断时间是否超过 UnLockTimeOut
+                lastUnLockTime = DateTime.Now;
+                return WanClient.UnlockPc();
+            }
+            return true;
+        }
+
         private void Tick()
         {
             if(isautolock == false && isautounlock == false)
@@ -477,7 +523,8 @@ namespace UnlockServer
                                 }
                             Console.WriteLine("信号强度弱，锁屏！"); 
                             sessionSwitchClass.dolocking = true;
-                            WanClient.LockPc(); 
+                                //WanClient.LockPc(); 
+                                LockByTimeOut();
                             } 
                         //lockCount++;
                         //unlockount = 0;
@@ -498,7 +545,7 @@ namespace UnlockServer
                             Console.WriteLine("信号强度够且处于锁屏状态，解锁！");
                              
                                 sessionSwitchClass.dounlocking = true; 
-                                bool ret = WanClient.UnlockPc();   
+                                bool ret = UnLockByTimeOut();   
 
                              if (ret ==false)
                             {
@@ -528,7 +575,7 @@ namespace UnlockServer
                             } 
                             Console.WriteLine("找不到设备，锁屏！");
                             sessionSwitchClass.dolocking = true;
-                            WanClient.LockPc(); 
+                            LockByTimeOut();
                         }
                     //lockCount++;
                     //unlockount = 0;

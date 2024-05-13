@@ -214,12 +214,12 @@ namespace UnlockServer
                         {
                             if (address.Contains(device.Address))
                             {
-#if DEBUG
-                        if(deviceInfo.Name.Contains("HUAWEI"))
-                        {
+//#if DEBUG
+//                        if(deviceInfo.Name.Contains("HUAWEI"))
+//                        {
 
-                        }
-#endif
+//                        }
+//#endif
                                 device.Rssi = rssi;
                                 con = true;
                             } 
@@ -254,12 +254,12 @@ namespace UnlockServer
                         var r = mybluetoothDevices.FirstOrDefault(p => address.Contains(p.Address));
                         if (r != null)
                         {
-#if DEBUG
-                        if(deviceInfo.Name.Contains("HUAWEI"))
-                        {
+//#if DEBUG
+//                        if(deviceInfo.Name.Contains("HUAWEI"))
+//                        {
 
-                        }
-#endif
+//                        }
+//#endif
                             mybluetoothDevices.Remove(r);
                         }
                     }
