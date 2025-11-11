@@ -52,7 +52,7 @@ namespace UnlockServer
         public static void reloadConfig()
         {
             try { 
-             ip = OperateIniFile.ReadSafeString("setting", "ip", ip); 
+              ip = OperateIniFile.ReadSafeString("setting", "ip", ip); 
               port = int.Parse(OperateIniFile.ReadSafeString("setting", "pt", "2084"));
             
               username = OperateIniFile.ReadSafeString("setting", "us", "");

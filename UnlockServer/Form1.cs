@@ -1,4 +1,7 @@
-﻿using System;
+﻿using InTheHand.Net;
+using InTheHand.Net.Bluetooth;
+using InTheHand.Net.Sockets; 
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
@@ -6,14 +9,13 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms; 
-using InTheHand.Net;
-using InTheHand.Net.Bluetooth;
-using InTheHand.Net.Sockets; 
 using Windows.Devices.Bluetooth;
 using Windows.Devices.Bluetooth.Advertisement;
 using Windows.Devices.Enumeration;
@@ -24,7 +26,6 @@ namespace UnlockServer
 {
     public partial class Form1 : Form
     {
-        BluetoothDiscover bluetoothDiscover;
         public Form1()
         {
             InitializeComponent();
@@ -56,77 +57,34 @@ namespace UnlockServer
         private void Form1_FormClosed(object sender, FormClosedEventArgs e)
         {
             try
-            {
-                isrunning = false;
-                sessionSwitchClass.Close();
-                bluetoothDiscover?.StopDiscover(); 
+            { 
+                if(unlockManager != null){ 
+                    unlockManager.Stop();
+                }
             }
             catch (Exception ex)
             {
 
             }
-        }
-        private const string SignalStrengthProperty = "System.Devices.Aep.SignalStrength";
+        } 
 
-        //BluetoothLEAdvertisementWatcher Watcher = new BluetoothLEAdvertisementWatcher();
-        private static SessionSwitchClass sessionSwitchClass;
+        private static UnlockManager unlockManager;
         private void Form1_Load(object sender, EventArgs e)
         {
-            sessionSwitchClass  = new SessionSwitchClass(); 
-            try
-            {
-                loadConfig(); 
-                bluetoothDiscover = new BluetoothDiscover(bletype);
-                bluetoothDiscover.StartDiscover();
-
-                BluetoothRadio radio = BluetoothRadio.Default;//获取蓝牙适配器
-                if (radio == null)
-                { 
-                    MessageBox.Show("没有找到本机蓝牙设备！");
-                    return;
-                } 
-                btn_refreshbluetooth_Click(null, null);
-
-                Task.Delay(3000).ContinueWith((r) =>
-                {
-                    isrunning = true;
-                    while (isrunning)
-                    {
-                        try
-                        {
-                            Tick();
-                        }catch(Exception ex)
-                        {
-                            Console.WriteLine("error:"+ex.Message);
-                        }
-                        Thread.Sleep(1000);
-                    }
-
-                },TaskContinuationOptions.LongRunning);
-
-            }
-            catch(Exception ex)
-            {
-                MessageBox.Show("启动蓝牙监控失败，可能没有蓝牙硬件或者不兼容！");
-            } 
+            unlockManager = new UnlockManager();
+            loadConfig();
+            unlockManager.Start();
+            unlockManager.UpdategRssi = UpdategRssi;
             if (Program.ishideRun)
             { 
                 this.Close();
             }
         }
-        bool isrunning = false;
-        private void MWatcher_Updated(DeviceWatcher sender, DeviceInformationUpdate deviceInformation)
+        private void UpdategRssi(string rssi)
         {
-            var rssi = Convert.ToInt16(deviceInformation.Properties[SignalStrengthProperty]);
-            Console.WriteLine(rssi + " " + deviceInformation.Id);
-        }
-
-        private void MWatcher_Added(DeviceWatcher sender, DeviceInformation deviceInformation)
-        {
-
-            var rssi = Convert.ToInt16(deviceInformation.Properties[SignalStrengthProperty]);
-            Console.WriteLine(rssi + " " + deviceInformation.Id);
-
+            txt_bleDevice.Invoke(new Action(()=>{ 
+                txt_bleDevice.Text = txt_bleDevice.Text.Split('-')[0] .Trim()+ " - " + rssi+ "dBm";
+            }));
         }
 
         int rssiyuzhi = -90;
@@ -142,7 +100,10 @@ namespace UnlockServer
             txtpd.Text = OperateIniFile.ReadSafeString("setting", "pd", txtpd.Text);
             txtrssi.Text = OperateIniFile.ReadSafeString("setting", "rssi", txtrssi.Text);
             int.TryParse(txtrssi.Text, out rssiyuzhi);
-            unlockaddress = OperateIniFile.ReadSafeString("setting", "address", unlockaddress); 
+            unlockManager.rssiyuzhi = rssiyuzhi;
+            var unlockaddress = OperateIniFile.ReadSafeString("setting", "address", "00:00:00:00:00:00"); 
+            unlockManager.setunlockaddress(unlockaddress); 
+            txt_bleDevice.Text = unlockaddress;
             getBluetoothType();
             reloadLockConfig(); 
             WanClient.reloadConfig();
@@ -153,7 +114,8 @@ namespace UnlockServer
         {
             var type= OperateIniFile.ReadIniInt("setting", "type", 1);
             bletype = type;
-             if (type == 2)
+            unlockManager.bletype = bletype;
+            if (type == 2)
             {
                 rdbble.Checked = true;
             }
@@ -161,6 +123,7 @@ namespace UnlockServer
             {
                 rdbclassic.Checked = true;
             }
+
         }
 
         private void setBluetoothType()
@@ -175,11 +138,10 @@ namespace UnlockServer
                 type = 2;
             }
             bletype = type;
+            unlockManager.bletype = bletype;
             OperateIniFile.WriteIniInt("setting", "type", type);
         }
-
-
-        string unlockaddress = "";
+         
         private void btn_save_Click(object sender, EventArgs e)
         { 
             try
@@ -202,25 +164,23 @@ namespace UnlockServer
                     txtpd.Focus();
                     MessageBox.Show(this, "密码不能为空！");
                     return;
-                }
+                } 
 
-                if (lstbldevice.SelectedIndex < 0 || lstbldevice.SelectedIndex >= lstbldevice.Items.Count)
-                {
-                    MessageBox.Show(this, "请选择有效的蓝牙设备!");
+                var address = txt_bleDevice.Text.Trim();
+                if (!UnlockManager.IsValidBluetoothAddress(address)){
+
+                    MessageBox.Show(this, "蓝牙地址无效！");
                     return;
                 }
-
-                var selectedDevice = deviceAddresses[lstbldevice.Items[lstbldevice.SelectedIndex].ToString()];
-                var address = selectedDevice.Address;
-                OperateIniFile.WriteSafeString("setting", "address", address);
-                unlockaddress = address;
-
+                OperateIniFile.WriteSafeString("setting", "address", address); 
+                unlockManager.setunlockaddress(address);
                 if (int.TryParse(txtrssi.Text, out rssiyuzhi) == false || rssiyuzhi > 0 || rssiyuzhi < -128)
                 {
                     txtrssi.Focus();
                     MessageBox.Show(this, "请输入有效的信号阈值(-128到0)!");
                     return;
                 }
+                unlockManager.rssiyuzhi = rssiyuzhi; 
                 if (int.TryParse(txtpt.Text, out int pt) == false || pt >= 65565 || pt <= 0)
                 {
                     txtrssi.Focus();
@@ -279,95 +239,8 @@ namespace UnlockServer
             var id = args.Id;
             string s1 = $"[{x1}] {(args.Name).PadLeft(30, ' ')} {args.Id}";
              
-        }
-
-
-        private void btn_refreshbluetooth_Click(object sender, EventArgs e)
-        {
-            Task.Run(() =>
-            { 
-                try
-                {
-                    this.Invoke(new Action(() =>
-                    {
-                        btn_refreshbluetooth.Text = "正在刷新";
-                        btn_refreshbluetooth.Enabled = false;
-                    }));
-               
-                    LoadList();
-
-
-                    this.Invoke(new Action(() =>
-                    {
-                        btn_refreshbluetooth.Text = "刷新蓝牙设备";
-                        btn_refreshbluetooth.Enabled = true;
-                    }));
-
-                
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine(ex.Message);
-                    this.Invoke(new Action(() =>
-                    {
-                        MessageBox.Show(this,"未找到本机蓝牙设备!");
-                    }));
-                } 
-            });
-        }
-        Dictionary<string, MybluetoothDevice> deviceAddresses = new Dictionary<string, MybluetoothDevice>();
-        private void LoadList()
-        {
-            if(bluetoothDiscover!=null)
-            {
-                bluetoothDiscover.StopDiscover();
-            } 
-            bluetoothDiscover = new BluetoothDiscover(bletype);
-            bluetoothDiscover.StartDiscover();
-             
-            var address = OperateIniFile.ReadSafeString("setting", "address", ""); 
-             
-            Thread.Sleep(2000);
-
-            var devices = bluetoothDiscover.getAllDevice();
-
-            List<string> items = new List<string>(); 
-            this.Invoke(new Action(() =>
-            {
-                lstbldevice.Items.Clear();
-            })); 
-
-            deviceAddresses.Clear();
-            int index = -1;
-            int i = 0;
-            lock(BluetoothDiscover.locker)
-            {
-                foreach (MybluetoothDevice device in devices)
-                {
-                    var inlist = device.Name + "(" + device.Type + ")" + device.Rssi + "dBm" + "[" + device.Address + "]";
-                    this.Invoke(new Action(() =>
-                    {
-                        lstbldevice.Items.Add(inlist);
-                    }));
-                    if (address == device.Address)
-                    {
-                        index = i;
-                    }
-                    deviceAddresses[inlist] = device;
-                    i++;
-                }
-            }
-          
-            this.Invoke(new Action(() =>
-            {
-                if (lstbldevice.Items.Count > 0)
-                {
-                    lstbldevice.SelectedIndex = index;
-                } 
-            }));
-           
-        }
-
+        } 
+         
         private void button1_Click(object sender, EventArgs e)
         {
             Process.Start(new ProcessStartInfo("https://www.52pojie.cn/thread-1678522-1-1.html"));  
@@ -407,184 +280,6 @@ namespace UnlockServer
             }
         } 
 
-        private int locktimecount = 0; 
-        private bool isunlockfail = false;
-
-        private object lockLock = new object();
-
-        /// <summary>
-        /// 锁定超时，默认60秒最多锁定一次，防止找不到设备重复锁定导致电脑无法解锁
-        /// </summary>
-        private TimeSpan LockTimeOut = TimeSpan.FromMilliseconds(60 * 1000);
-
-        /// <summary>
-        /// 解锁超时，默认60秒最多解锁一次
-        /// </summary>
-        private TimeSpan UnLockTimeOut = TimeSpan.FromMilliseconds(30 * 1000);
-
-        DateTime lastLockTime = DateTime.MinValue;
-        DateTime lastUnLockTime = DateTime.MinValue;
-
-        /// <summary>
-        /// 超时锁定
-        /// </summary>
-        private void LockByTimeOut()
-        {
-            DateTime now = DateTime.Now;
-
-            if((now - lastLockTime) > LockTimeOut )
-            {
-                //这里判断时间是否超过 LockTimeOut
-                lastLockTime = DateTime.Now;
-                WanClient.LockPc();
-            }  
-        }
-
-        /// <summary>
-        /// 超时锁定
-        /// </summary>
-        private bool UnLockByTimeOut()
-        {
-            DateTime now = DateTime.Now;
-
-            if ((now - lastUnLockTime) > UnLockTimeOut)
-            {
-                //这里判断时间是否超过 UnLockTimeOut
-                lastUnLockTime = DateTime.Now;
-                return WanClient.UnlockPc();
-            }
-            return true;
-        }
-
-        private void Tick()
-        {
-            if(isautolock == false && isautounlock == false)
-            {
-                //没有启用
-
-                Console.WriteLine("未启用");
-                return;
-            }
-            if (string.IsNullOrWhiteSpace(unlockaddress) || WanClient.isConfigVal() == false) 
-            {
-                //配置无效
-                Console.WriteLine("配置无效");
-                return;
-            }
-
-            lock (lockLock)
-            {
-
-                bool islocked = WanClient.IsSessionLocked();
-            
-                if(islocked)
-                {
-                    //现在是锁定状态 
-                }
-                else
-                {
-                    //已经解锁 
-                    isunlockfail = false;
-                }
-
-                if(isunlockfail)
-                {
-                    //上次解锁失败
-                    locktimecount++;
-                    return;
-                }
-                if (locktimecount >= 120)
-                {
-                    //重置时间
-                    isunlockfail = false;
-                    locktimecount = 0; 
-                }
-
-            if(bluetoothDiscover==null)
-            {
-                return;
-            }
-            var Devices = bluetoothDiscover.getAllDevice();
-           
-            MybluetoothDevice device = Devices.FirstOrDefault(p => p.Address == unlockaddress);
-            if (device != null)
-            {
-                Console.WriteLine("发现设备:" + device.Name + "[" + device.Address + "] " + device.Rssi+"dBm");
-                if (device.Rssi < rssiyuzhi)
-                {
-                    if(islocked==false )//&& lockCount == 0
-                    { 
-                        if(isautolock)
-                        {
-                                if(sessionSwitchClass.isUnlockBySoft==false && manualunlock == true)
-                                { 
-                                    Console.WriteLine("非软件解锁，不干预！");
-                                    return;
-                                }
-                            Console.WriteLine("信号强度弱，锁屏！"); 
-                            sessionSwitchClass.dolocking = true;
-                                //WanClient.LockPc(); 
-                                LockByTimeOut();
-                            } 
-                        //lockCount++;
-                        //unlockount = 0;
-                    }
-                }
-                else
-                { 
-                    if (islocked)
-                    { 
-                        if(isautounlock)
-                        {
-                                if(manuallock==true && sessionSwitchClass.isLockBySoft == false)
-                                {
-                                    //不干预人工解锁
-                                    Console.WriteLine("非软件锁定，不干预！");
-                                    return;
-                                }
-                            Console.WriteLine("信号强度够且处于锁屏状态，解锁！");
-                             
-                                sessionSwitchClass.dounlocking = true; 
-                                bool ret = UnLockByTimeOut();   
-
-                             if (ret ==false)
-                            {
-                                isunlockfail = true;
-                            } 
-                        } 
-                    }
-                    else
-                    {
-                        if (isautounlock)
-                        {
-                            Console.WriteLine("信号强度够且但是未处于锁定状态！"); 
-                        } 
-                    }
-                }
-            }
-            else
-            {
-                if (islocked == false) //  && lockCount == 0
-                    {
-                    if (isautolock)
-                        {
-                            if (sessionSwitchClass.isUnlockBySoft == false && manualunlock == true)
-                            {
-                                Console.WriteLine("非软件解锁，不干预人工解锁！");
-                                return;
-                            } 
-                            Console.WriteLine("找不到设备，锁屏！");
-                            sessionSwitchClass.dolocking = true;
-                            LockByTimeOut();
-                        }
-                    //lockCount++;
-                    //unlockount = 0;
-                }
-            }
-
-            }
-        }
-
         private void rdbclassic_CheckedChanged(object sender, EventArgs e)
         {
             setBluetoothType();
@@ -606,17 +301,15 @@ namespace UnlockServer
         }
         private void button2_Click(object sender, EventArgs e)
         {
-            try { 
-            if (lstbldevice.SelectedIndex < 0 || lstbldevice.SelectedIndex >= lstbldevice.Items.Count)
-            {
-                MessageBox.Show(this, "请选择有效的蓝牙设备!");
-                return;
-            }
+            try 
+            {  
+                string address= txt_bleDevice.Text.Trim();
+                if(!UnlockManager.IsValidBluetoothAddress(address))
+                {
+                    MessageBox.Show(this, "蓝牙地址无效！");
+                    return;
+                } 
 
-            var selectedDevice = deviceAddresses[lstbldevice.Items[lstbldevice.SelectedIndex].ToString()];
-            if(selectedDevice.Type=="BLE")
-            {
-                var address = selectedDevice.Address;
                 BluetoothAddress ad = BluetoothAddress.Parse(address).ToUInt64();
                 BluetoothLEDevice bluetoothLEDevice = BluetoothLEDevice.FromBluetoothAddressAsync(ad).GetAwaiter().GetResult();
                 bluetoothLEDevice.DeviceInformation.Pairing.Custom.PairingRequested += handlerPairingReq;
@@ -629,12 +322,7 @@ namespace UnlockServer
                 var gatt = bleDevice.GetGattServicesAsync(BluetoothCacheMode.Cached).GetAwaiter().GetResult();
                 var servv = gatt.Services[1];
 
-                MessageBox.Show(this, prslt.Status.ToString());
-            }
-            else
-            {
-                MessageBox.Show(this,"经典蓝牙设备请手动操作！");
-            }
+                MessageBox.Show(this, prslt.Status.ToString()); 
             }catch(Exception ex)
             {
                 MessageBox.Show(this, "取消配对发生错误："+ex.Message);
@@ -690,8 +378,12 @@ namespace UnlockServer
                 ckb_autounlock.Checked = isautounlock;
                 ckb_manuallock.Checked = manuallock;
                 ckb_manuclunlock.Checked = manualunlock;
-            }
+                unlockManager.isautolock = isautolock;
+                unlockManager.isautounlock = isautounlock;
+                unlockManager.manuallock = manuallock;
+                unlockManager.manualunlock = manualunlock;
 
+            }
             catch (Exception ex)
             {
                 Console.WriteLine(ex.Message);
@@ -732,21 +424,42 @@ namespace UnlockServer
 
         private void button3_Click(object sender, EventArgs e)
         {
-            sessionSwitchClass.dolocking = true;
-            sessionSwitchClass.isLockBySoft = true;
+            unlockManager.sessionSwitchClass.dolocking = true;
+            unlockManager.sessionSwitchClass.isLockBySoft = true;
             WanClient.LockPc();  
         }
 
         private void 锁屏ToolStripMenuItem_Click(object sender, EventArgs e)
-        { 
-            sessionSwitchClass.dolocking = true;
-            sessionSwitchClass.isLockBySoft = true;
+        {
+            unlockManager.sessionSwitchClass.dolocking = true;
+            unlockManager.sessionSwitchClass.isLockBySoft = true;
             WanClient.LockPc();
         }
 
         private void 隐藏ToolStripMenuItem_Click(object sender, EventArgs e)
         {
             this.Close();
+        }
+
+        private void btn_searchDevice_Click(object sender, EventArgs e)
+        {
+            BtDeviceListForm btDeviceListForm = new BtDeviceListForm(bletype);
+            btDeviceListForm.StartPosition = FormStartPosition.CenterParent;
+            btDeviceListForm.Owner = this;
+            btDeviceListForm.ShowDialog(); 
+            if(btDeviceListForm.DialogResult == DialogResult.OK)
+            {
+                bletype = btDeviceListForm.bletype;
+                unlockManager.bletype = btDeviceListForm.bletype; 
+                OperateIniFile.WriteIniInt("setting", "type", bletype); 
+                unlockManager.setunlockaddress(btDeviceListForm.address);
+                OperateIniFile.WriteSafeString("setting", "address", btDeviceListForm.address); 
+                txt_bleDevice.Text =  btDeviceListForm.address;
+                getBluetoothType();
+                unlockManager.Stop();
+                unlockManager.Start();
+
+            }
         }
     }
 }

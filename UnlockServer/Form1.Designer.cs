@@ -40,14 +40,14 @@
             this.txtpd = new System.Windows.Forms.TextBox();
             this.label4 = new System.Windows.Forms.Label();
             this.label5 = new System.Windows.Forms.Label();
-            this.lstbldevice = new System.Windows.Forms.ComboBox();
-            this.btn_refreshbluetooth = new System.Windows.Forms.Button();
             this.txtrssi = new System.Windows.Forms.TextBox();
             this.label6 = new System.Windows.Forms.Label();
             this.button1 = new System.Windows.Forms.Button();
             this.notifyIcon1 = new System.Windows.Forms.NotifyIcon(this.components);
             this.contextMenuStrip1 = new System.Windows.Forms.ContextMenuStrip(this.components);
             this.显示ToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.隐藏ToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.锁屏ToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.退出ToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.label7 = new System.Windows.Forms.Label();
             this.rdbclassic = new System.Windows.Forms.RadioButton();
@@ -61,16 +61,17 @@
             this.toolTip1 = new System.Windows.Forms.ToolTip(this.components);
             this.ckb_manuclunlock = new System.Windows.Forms.CheckBox();
             this.button3 = new System.Windows.Forms.Button();
-            this.锁屏ToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
-            this.隐藏ToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.btn_searchDevice = new System.Windows.Forms.Button();
+            this.txt_bleDevice = new System.Windows.Forms.TextBox();
             this.contextMenuStrip1.SuspendLayout();
             this.SuspendLayout();
             // 
             // btn_save
             // 
-            this.btn_save.Location = new System.Drawing.Point(137, 387);
+            this.btn_save.Location = new System.Drawing.Point(82, 774);
+            this.btn_save.Margin = new System.Windows.Forms.Padding(6);
             this.btn_save.Name = "btn_save";
-            this.btn_save.Size = new System.Drawing.Size(88, 41);
+            this.btn_save.Size = new System.Drawing.Size(176, 82);
             this.btn_save.TabIndex = 0;
             this.btn_save.Text = "保存配置";
             this.btn_save.UseVisualStyleBackColor = true;
@@ -79,121 +80,114 @@
             // label1
             // 
             this.label1.AutoSize = true;
-            this.label1.Location = new System.Drawing.Point(39, 32);
+            this.label1.Location = new System.Drawing.Point(78, 64);
+            this.label1.Margin = new System.Windows.Forms.Padding(6, 0, 6, 0);
             this.label1.Name = "label1";
-            this.label1.Size = new System.Drawing.Size(53, 12);
+            this.label1.Size = new System.Drawing.Size(106, 24);
             this.label1.TabIndex = 1;
             this.label1.Text = "电脑IP：";
             // 
             // txtip
             // 
-            this.txtip.Location = new System.Drawing.Point(110, 29);
+            this.txtip.Location = new System.Drawing.Point(220, 58);
+            this.txtip.Margin = new System.Windows.Forms.Padding(6);
             this.txtip.Name = "txtip";
-            this.txtip.Size = new System.Drawing.Size(412, 21);
+            this.txtip.Size = new System.Drawing.Size(820, 35);
             this.txtip.TabIndex = 2;
             this.txtip.Text = "127.0.0.1";
             // 
             // txtpt
             // 
-            this.txtpt.Location = new System.Drawing.Point(110, 73);
+            this.txtpt.Location = new System.Drawing.Point(220, 146);
+            this.txtpt.Margin = new System.Windows.Forms.Padding(6);
             this.txtpt.Name = "txtpt";
-            this.txtpt.Size = new System.Drawing.Size(412, 21);
+            this.txtpt.Size = new System.Drawing.Size(820, 35);
             this.txtpt.TabIndex = 4;
             this.txtpt.Text = "2084";
             // 
             // label2
             // 
             this.label2.AutoSize = true;
-            this.label2.Location = new System.Drawing.Point(39, 76);
+            this.label2.Location = new System.Drawing.Point(78, 152);
+            this.label2.Margin = new System.Windows.Forms.Padding(6, 0, 6, 0);
             this.label2.Name = "label2";
-            this.label2.Size = new System.Drawing.Size(65, 12);
+            this.label2.Size = new System.Drawing.Size(130, 24);
             this.label2.TabIndex = 3;
             this.label2.Text = "解锁端口：";
             // 
             // txtus
             // 
-            this.txtus.Location = new System.Drawing.Point(110, 117);
+            this.txtus.Location = new System.Drawing.Point(220, 234);
+            this.txtus.Margin = new System.Windows.Forms.Padding(6);
             this.txtus.Name = "txtus";
-            this.txtus.Size = new System.Drawing.Size(412, 21);
+            this.txtus.Size = new System.Drawing.Size(820, 35);
             this.txtus.TabIndex = 6;
             this.txtus.Text = "Administrator";
             // 
             // label3
             // 
             this.label3.AutoSize = true;
-            this.label3.Location = new System.Drawing.Point(39, 120);
+            this.label3.Location = new System.Drawing.Point(78, 240);
+            this.label3.Margin = new System.Windows.Forms.Padding(6, 0, 6, 0);
             this.label3.Name = "label3";
-            this.label3.Size = new System.Drawing.Size(53, 12);
+            this.label3.Size = new System.Drawing.Size(106, 24);
             this.label3.TabIndex = 5;
             this.label3.Text = "用户名：";
             // 
             // txtpd
             // 
-            this.txtpd.Location = new System.Drawing.Point(110, 161);
+            this.txtpd.Location = new System.Drawing.Point(220, 322);
+            this.txtpd.Margin = new System.Windows.Forms.Padding(6);
             this.txtpd.Name = "txtpd";
             this.txtpd.PasswordChar = '*';
-            this.txtpd.Size = new System.Drawing.Size(412, 21);
+            this.txtpd.Size = new System.Drawing.Size(820, 35);
             this.txtpd.TabIndex = 8;
             // 
             // label4
             // 
             this.label4.AutoSize = true;
-            this.label4.Location = new System.Drawing.Point(39, 164);
+            this.label4.Location = new System.Drawing.Point(78, 328);
+            this.label4.Margin = new System.Windows.Forms.Padding(6, 0, 6, 0);
             this.label4.Name = "label4";
-            this.label4.Size = new System.Drawing.Size(41, 12);
+            this.label4.Size = new System.Drawing.Size(82, 24);
             this.label4.TabIndex = 7;
             this.label4.Text = "密码：";
             // 
             // label5
             // 
             this.label5.AutoSize = true;
-            this.label5.Location = new System.Drawing.Point(39, 208);
+            this.label5.Location = new System.Drawing.Point(78, 416);
+            this.label5.Margin = new System.Windows.Forms.Padding(6, 0, 6, 0);
             this.label5.Name = "label5";
-            this.label5.Size = new System.Drawing.Size(65, 12);
+            this.label5.Size = new System.Drawing.Size(130, 24);
             this.label5.TabIndex = 9;
             this.label5.Text = "蓝牙设备：";
             // 
-            // lstbldevice
-            // 
-            this.lstbldevice.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
-            this.lstbldevice.FormattingEnabled = true;
-            this.lstbldevice.Location = new System.Drawing.Point(110, 205);
-            this.lstbldevice.Name = "lstbldevice";
-            this.lstbldevice.Size = new System.Drawing.Size(412, 20);
-            this.lstbldevice.TabIndex = 10;
-            // 
-            // btn_refreshbluetooth
-            // 
-            this.btn_refreshbluetooth.Location = new System.Drawing.Point(41, 387);
-            this.btn_refreshbluetooth.Name = "btn_refreshbluetooth";
-            this.btn_refreshbluetooth.Size = new System.Drawing.Size(88, 41);
-            this.btn_refreshbluetooth.TabIndex = 11;
-            this.btn_refreshbluetooth.Text = "刷新蓝牙设备";
-            this.btn_refreshbluetooth.UseVisualStyleBackColor = true;
-            this.btn_refreshbluetooth.Click += new System.EventHandler(this.btn_refreshbluetooth_Click);
-            // 
             // txtrssi
             // 
-            this.txtrssi.Location = new System.Drawing.Point(110, 248);
+            this.txtrssi.Location = new System.Drawing.Point(220, 496);
+            this.txtrssi.Margin = new System.Windows.Forms.Padding(6);
             this.txtrssi.Name = "txtrssi";
-            this.txtrssi.Size = new System.Drawing.Size(412, 21);
+            this.txtrssi.Size = new System.Drawing.Size(820, 35);
             this.txtrssi.TabIndex = 13;
             this.txtrssi.Text = "-90";
             // 
             // label6
             // 
             this.label6.AutoSize = true;
-            this.label6.Location = new System.Drawing.Point(39, 252);
+            this.label6.Location = new System.Drawing.Point(78, 504);
+            this.label6.Margin = new System.Windows.Forms.Padding(6, 0, 6, 0);
             this.label6.Name = "label6";
-            this.label6.Size = new System.Drawing.Size(65, 12);
+            this.label6.Size = new System.Drawing.Size(130, 24);
             this.label6.TabIndex = 12;
             this.label6.Text = "信号阈值：";
             // 
             // button1
             // 
-            this.button1.Location = new System.Drawing.Point(233, 387);
+            this.button1.Location = new System.Drawing.Point(351, 774);
+            this.button1.Margin = new System.Windows.Forms.Padding(6);
             this.button1.Name = "button1";
-            this.button1.Size = new System.Drawing.Size(88, 41);
+            this.button1.Size = new System.Drawing.Size(176, 82);
             this.button1.TabIndex = 14;
             this.button1.Text = "检查更新";
             this.button1.UseVisualStyleBackColor = true;
@@ -209,43 +203,61 @@
             // 
             // contextMenuStrip1
             // 
+            this.contextMenuStrip1.ImageScalingSize = new System.Drawing.Size(32, 32);
             this.contextMenuStrip1.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
             this.显示ToolStripMenuItem,
             this.隐藏ToolStripMenuItem,
             this.锁屏ToolStripMenuItem,
             this.退出ToolStripMenuItem});
             this.contextMenuStrip1.Name = "contextMenuStrip1";
-            this.contextMenuStrip1.Size = new System.Drawing.Size(101, 92);
+            this.contextMenuStrip1.Size = new System.Drawing.Size(137, 156);
             // 
             // 显示ToolStripMenuItem
             // 
             this.显示ToolStripMenuItem.Name = "显示ToolStripMenuItem";
-            this.显示ToolStripMenuItem.Size = new System.Drawing.Size(180, 22);
+            this.显示ToolStripMenuItem.Size = new System.Drawing.Size(136, 38);
             this.显示ToolStripMenuItem.Text = "显示";
             this.显示ToolStripMenuItem.Click += new System.EventHandler(this.显示ToolStripMenuItem_Click);
+            // 
+            // 隐藏ToolStripMenuItem
+            // 
+            this.隐藏ToolStripMenuItem.Name = "隐藏ToolStripMenuItem";
+            this.隐藏ToolStripMenuItem.Size = new System.Drawing.Size(136, 38);
+            this.隐藏ToolStripMenuItem.Text = "隐藏";
+            this.隐藏ToolStripMenuItem.Click += new System.EventHandler(this.隐藏ToolStripMenuItem_Click);
+            // 
+            // 锁屏ToolStripMenuItem
+            // 
+            this.锁屏ToolStripMenuItem.Name = "锁屏ToolStripMenuItem";
+            this.锁屏ToolStripMenuItem.Size = new System.Drawing.Size(136, 38);
+            this.锁屏ToolStripMenuItem.Text = "锁屏";
+            this.锁屏ToolStripMenuItem.Click += new System.EventHandler(this.锁屏ToolStripMenuItem_Click);
             // 
             // 退出ToolStripMenuItem
             // 
             this.退出ToolStripMenuItem.Name = "退出ToolStripMenuItem";
-            this.退出ToolStripMenuItem.Size = new System.Drawing.Size(180, 22);
+            this.退出ToolStripMenuItem.Size = new System.Drawing.Size(136, 38);
             this.退出ToolStripMenuItem.Text = "退出";
             this.退出ToolStripMenuItem.Click += new System.EventHandler(this.退出ToolStripMenuItem_Click);
             // 
             // label7
             // 
             this.label7.AutoSize = true;
-            this.label7.Location = new System.Drawing.Point(39, 293);
+            this.label7.Location = new System.Drawing.Point(78, 586);
+            this.label7.Margin = new System.Windows.Forms.Padding(6, 0, 6, 0);
             this.label7.Name = "label7";
-            this.label7.Size = new System.Drawing.Size(65, 12);
+            this.label7.Size = new System.Drawing.Size(130, 24);
             this.label7.TabIndex = 15;
             this.label7.Text = "设备类型：";
             // 
             // rdbclassic
             // 
             this.rdbclassic.AutoSize = true;
-            this.rdbclassic.Location = new System.Drawing.Point(110, 293);
+            this.rdbclassic.Enabled = false;
+            this.rdbclassic.Location = new System.Drawing.Point(220, 586);
+            this.rdbclassic.Margin = new System.Windows.Forms.Padding(6);
             this.rdbclassic.Name = "rdbclassic";
-            this.rdbclassic.Size = new System.Drawing.Size(95, 16);
+            this.rdbclassic.Size = new System.Drawing.Size(185, 28);
             this.rdbclassic.TabIndex = 16;
             this.rdbclassic.TabStop = true;
             this.rdbclassic.Text = "经典蓝牙设备";
@@ -255,9 +267,11 @@
             // rdbble
             // 
             this.rdbble.AutoSize = true;
-            this.rdbble.Location = new System.Drawing.Point(242, 291);
+            this.rdbble.Enabled = false;
+            this.rdbble.Location = new System.Drawing.Point(484, 582);
+            this.rdbble.Margin = new System.Windows.Forms.Padding(6);
             this.rdbble.Name = "rdbble";
-            this.rdbble.Size = new System.Drawing.Size(65, 16);
+            this.rdbble.Size = new System.Drawing.Size(125, 28);
             this.rdbble.TabIndex = 17;
             this.rdbble.TabStop = true;
             this.rdbble.Text = "BLE设备";
@@ -266,9 +280,10 @@
             // 
             // button2
             // 
-            this.button2.Location = new System.Drawing.Point(329, 387);
+            this.button2.Location = new System.Drawing.Point(600, 774);
+            this.button2.Margin = new System.Windows.Forms.Padding(6);
             this.button2.Name = "button2";
-            this.button2.Size = new System.Drawing.Size(88, 41);
+            this.button2.Size = new System.Drawing.Size(176, 82);
             this.button2.TabIndex = 18;
             this.button2.Text = "取消配对";
             this.button2.UseVisualStyleBackColor = true;
@@ -277,9 +292,10 @@
             // checkBox1
             // 
             this.checkBox1.AutoSize = true;
-            this.checkBox1.Location = new System.Drawing.Point(450, 289);
+            this.checkBox1.Location = new System.Drawing.Point(900, 578);
+            this.checkBox1.Margin = new System.Windows.Forms.Padding(6);
             this.checkBox1.Name = "checkBox1";
-            this.checkBox1.Size = new System.Drawing.Size(72, 16);
+            this.checkBox1.Size = new System.Drawing.Size(138, 28);
             this.checkBox1.TabIndex = 20;
             this.checkBox1.Text = "开机自启";
             this.checkBox1.UseVisualStyleBackColor = true;
@@ -288,18 +304,20 @@
             // label8
             // 
             this.label8.AutoSize = true;
-            this.label8.Location = new System.Drawing.Point(39, 344);
+            this.label8.Location = new System.Drawing.Point(78, 688);
+            this.label8.Margin = new System.Windows.Forms.Padding(6, 0, 6, 0);
             this.label8.Name = "label8";
-            this.label8.Size = new System.Drawing.Size(65, 12);
+            this.label8.Size = new System.Drawing.Size(130, 24);
             this.label8.TabIndex = 21;
             this.label8.Text = "功能选项：";
             // 
             // ckb_autolock
             // 
             this.ckb_autolock.AutoSize = true;
-            this.ckb_autolock.Location = new System.Drawing.Point(110, 343);
+            this.ckb_autolock.Location = new System.Drawing.Point(220, 686);
+            this.ckb_autolock.Margin = new System.Windows.Forms.Padding(6);
             this.ckb_autolock.Name = "ckb_autolock";
-            this.ckb_autolock.Size = new System.Drawing.Size(72, 16);
+            this.ckb_autolock.Size = new System.Drawing.Size(138, 28);
             this.ckb_autolock.TabIndex = 22;
             this.ckb_autolock.Text = "自动锁定";
             this.ckb_autolock.UseVisualStyleBackColor = true;
@@ -308,9 +326,10 @@
             // ckb_autounlock
             // 
             this.ckb_autounlock.AutoSize = true;
-            this.ckb_autounlock.Location = new System.Drawing.Point(204, 343);
+            this.ckb_autounlock.Location = new System.Drawing.Point(408, 686);
+            this.ckb_autounlock.Margin = new System.Windows.Forms.Padding(6);
             this.ckb_autounlock.Name = "ckb_autounlock";
-            this.ckb_autounlock.Size = new System.Drawing.Size(72, 16);
+            this.ckb_autounlock.Size = new System.Drawing.Size(138, 28);
             this.ckb_autounlock.TabIndex = 23;
             this.ckb_autounlock.Text = "自动解锁";
             this.ckb_autounlock.UseVisualStyleBackColor = true;
@@ -319,9 +338,10 @@
             // ckb_manuallock
             // 
             this.ckb_manuallock.AutoSize = true;
-            this.ckb_manuallock.Location = new System.Drawing.Point(300, 343);
+            this.ckb_manuallock.Location = new System.Drawing.Point(600, 686);
+            this.ckb_manuallock.Margin = new System.Windows.Forms.Padding(6);
             this.ckb_manuallock.Name = "ckb_manuallock";
-            this.ckb_manuallock.Size = new System.Drawing.Size(108, 16);
+            this.ckb_manuallock.Size = new System.Drawing.Size(210, 28);
             this.ckb_manuallock.TabIndex = 24;
             this.ckb_manuallock.Text = "不干预人工锁定";
             this.toolTip1.SetToolTip(this.ckb_manuallock, "如果勾选此项，则人工锁定后，软件不会自动解锁");
@@ -331,9 +351,10 @@
             // ckb_manuclunlock
             // 
             this.ckb_manuclunlock.AutoSize = true;
-            this.ckb_manuclunlock.Location = new System.Drawing.Point(414, 343);
+            this.ckb_manuclunlock.Location = new System.Drawing.Point(828, 686);
+            this.ckb_manuclunlock.Margin = new System.Windows.Forms.Padding(6);
             this.ckb_manuclunlock.Name = "ckb_manuclunlock";
-            this.ckb_manuclunlock.Size = new System.Drawing.Size(108, 16);
+            this.ckb_manuclunlock.Size = new System.Drawing.Size(210, 28);
             this.ckb_manuclunlock.TabIndex = 25;
             this.ckb_manuclunlock.Text = "不干预人工解锁";
             this.toolTip1.SetToolTip(this.ckb_manuclunlock, "如果勾选此项，则人工解锁后，软件不会自动锁定");
@@ -342,34 +363,45 @@
             // 
             // button3
             // 
-            this.button3.Location = new System.Drawing.Point(425, 387);
+            this.button3.Location = new System.Drawing.Point(862, 774);
+            this.button3.Margin = new System.Windows.Forms.Padding(6);
             this.button3.Name = "button3";
-            this.button3.Size = new System.Drawing.Size(88, 41);
+            this.button3.Size = new System.Drawing.Size(176, 82);
             this.button3.TabIndex = 26;
             this.button3.Text = "锁屏";
             this.toolTip1.SetToolTip(this.button3, "此按钮锁屏相当于软件锁屏，会自动解锁");
             this.button3.UseVisualStyleBackColor = true;
             this.button3.Click += new System.EventHandler(this.button3_Click);
             // 
-            // 锁屏ToolStripMenuItem
+            // btn_searchDevice
             // 
-            this.锁屏ToolStripMenuItem.Name = "锁屏ToolStripMenuItem";
-            this.锁屏ToolStripMenuItem.Size = new System.Drawing.Size(180, 22);
-            this.锁屏ToolStripMenuItem.Text = "锁屏";
-            this.锁屏ToolStripMenuItem.Click += new System.EventHandler(this.锁屏ToolStripMenuItem_Click);
+            this.btn_searchDevice.Image = global::UnlockServer.Properties.Resources.dicsover;
+            this.btn_searchDevice.Location = new System.Drawing.Point(971, 389);
+            this.btn_searchDevice.Margin = new System.Windows.Forms.Padding(6);
+            this.btn_searchDevice.Name = "btn_searchDevice";
+            this.btn_searchDevice.Size = new System.Drawing.Size(78, 79);
+            this.btn_searchDevice.TabIndex = 28;
+            this.toolTip1.SetToolTip(this.btn_searchDevice, "搜索蓝牙设备");
+            this.btn_searchDevice.UseVisualStyleBackColor = true;
+            this.btn_searchDevice.Click += new System.EventHandler(this.btn_searchDevice_Click);
             // 
-            // 隐藏ToolStripMenuItem
+            // txt_bleDevice
             // 
-            this.隐藏ToolStripMenuItem.Name = "隐藏ToolStripMenuItem";
-            this.隐藏ToolStripMenuItem.Size = new System.Drawing.Size(180, 22);
-            this.隐藏ToolStripMenuItem.Text = "隐藏";
-            this.隐藏ToolStripMenuItem.Click += new System.EventHandler(this.隐藏ToolStripMenuItem_Click);
+            this.txt_bleDevice.Enabled = false;
+            this.txt_bleDevice.Location = new System.Drawing.Point(220, 413);
+            this.txt_bleDevice.Margin = new System.Windows.Forms.Padding(6);
+            this.txt_bleDevice.Name = "txt_bleDevice";
+            this.txt_bleDevice.Size = new System.Drawing.Size(739, 35);
+            this.txt_bleDevice.TabIndex = 27;
+            this.txt_bleDevice.Text = "00:00:00:00:00:00";
             // 
             // Form1
             // 
-            this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 12F);
+            this.AutoScaleDimensions = new System.Drawing.SizeF(12F, 24F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(555, 458);
+            this.ClientSize = new System.Drawing.Size(1088, 919);
+            this.Controls.Add(this.btn_searchDevice);
+            this.Controls.Add(this.txt_bleDevice);
             this.Controls.Add(this.button3);
             this.Controls.Add(this.ckb_manuclunlock);
             this.Controls.Add(this.ckb_manuallock);
@@ -384,8 +416,6 @@
             this.Controls.Add(this.button1);
             this.Controls.Add(this.txtrssi);
             this.Controls.Add(this.label6);
-            this.Controls.Add(this.btn_refreshbluetooth);
-            this.Controls.Add(this.lstbldevice);
             this.Controls.Add(this.label5);
             this.Controls.Add(this.txtpd);
             this.Controls.Add(this.label4);
@@ -398,6 +428,7 @@
             this.Controls.Add(this.btn_save);
             this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedSingle;
             this.Icon = ((System.Drawing.Icon)(resources.GetObject("$this.Icon")));
+            this.Margin = new System.Windows.Forms.Padding(6);
             this.MaximizeBox = false;
             this.Name = "Form1";
             this.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen;
@@ -420,8 +451,6 @@
         private System.Windows.Forms.TextBox txtpd;
         private System.Windows.Forms.Label label4;
         private System.Windows.Forms.Label label5;
-        private System.Windows.Forms.ComboBox lstbldevice;
-        private System.Windows.Forms.Button btn_refreshbluetooth;
         private System.Windows.Forms.TextBox txtrssi;
         private System.Windows.Forms.Label label6;
         private System.Windows.Forms.Button button1;
@@ -443,6 +472,8 @@
         private System.Windows.Forms.Button button3;
         private System.Windows.Forms.ToolStripMenuItem 锁屏ToolStripMenuItem;
         private System.Windows.Forms.ToolStripMenuItem 隐藏ToolStripMenuItem;
+        private System.Windows.Forms.TextBox txt_bleDevice;
+        private System.Windows.Forms.Button btn_searchDevice;
     }
 }
 

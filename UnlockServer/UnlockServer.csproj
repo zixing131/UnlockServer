@@ -5,7 +5,7 @@
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
     <ProjectGuid>{3BA32C07-6D83-4244-A4AD-FE13E818F507}</ProjectGuid>
-    <OutputType>WinExe</OutputType>
+    <OutputType>Exe</OutputType>
     <RootNamespace>UnlockServer</RootNamespace>
     <AssemblyName>UnlockServer</AssemblyName>
     <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
@@ -101,6 +101,12 @@
   <PropertyGroup>
     <ApplicationIcon>icon.ico</ApplicationIcon>
   </PropertyGroup>
+  <PropertyGroup>
+    <SignManifests>false</SignManifests>
+  </PropertyGroup>
+  <PropertyGroup>
+    <StartupObject />
+  </PropertyGroup>
   <ItemGroup>
     <Reference Include="InTheHand.Net.Bluetooth, Version=4.0.0.0, Culture=neutral, PublicKeyToken=ea38caa273134499, processorArchitecture=MSIL">
       <HintPath>..\packages\InTheHand.Net.Bluetooth.4.0.30\lib\net461\InTheHand.Net.Bluetooth.dll</HintPath>
@@ -131,22 +137,32 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="AES.cs" />
-    <Compile Include="AutoStartHelper.cs" />
-    <Compile Include="BluetoothDiscover.cs" />
+    <Compile Include="BtDeviceListForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="BtDeviceListForm.Designer.cs">
+      <DependentUpon>BtDeviceListForm.cs</DependentUpon>
+    </Compile>
+    <Compile Include="Utils\AESUtil.cs" />
+    <Compile Include="Utils\AutoStartHelper.cs" />
+    <Compile Include="Utils\BluetoothDiscover.cs" />
     <Compile Include="Form1.cs">
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="Form1.Designer.cs">
       <DependentUpon>Form1.cs</DependentUpon>
     </Compile>
-    <Compile Include="MybluetoothDevice.cs" />
-    <Compile Include="OperateIniFile.cs" />
+    <Compile Include="Beans\MybluetoothDevice.cs" />
+    <Compile Include="Utils\OperateIniFile.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="SessionSwitchClass.cs" />
-    <Compile Include="SslTcpClient.cs" />
-    <Compile Include="WanClient.cs" />
+    <Compile Include="Utils\SessionSwitchClass.cs" />
+    <Compile Include="Utils\SslTcpClient.cs" />
+    <Compile Include="Utils\UnlockManager.cs" />
+    <Compile Include="Utils\WanClient.cs" />
+    <EmbeddedResource Include="BtDeviceListForm.resx">
+      <DependentUpon>BtDeviceListForm.cs</DependentUpon>
+    </EmbeddedResource>
     <EmbeddedResource Include="Form1.resx">
       <DependentUpon>Form1.cs</DependentUpon>
     </EmbeddedResource>
@@ -158,6 +174,7 @@
     <Compile Include="Properties\Resources.Designer.cs">
       <AutoGen>True</AutoGen>
       <DependentUpon>Resources.resx</DependentUpon>
+      <DesignTime>True</DesignTime>
     </Compile>
     <None Include="packages.config" />
     <None Include="Properties\app.manifest" />
@@ -184,6 +201,7 @@
   <ItemGroup>
     <Content Include="icon.ico" />
     <Content Include="ic_launcher.png" />
+    <Content Include="dicsover.png" />
   </ItemGroup>
   <ItemGroup>
     <BootstrapperPackage Include=".NETFramework,Version=v4.8">

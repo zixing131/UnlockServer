@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 
 namespace UnlockServer
 {
-    public class AES
+    public class AESUtil
     {
         /// <summary>
         /// 获取密钥 必须是32字节

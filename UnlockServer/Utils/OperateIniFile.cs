@@ -75,7 +75,7 @@ namespace UnlockServer
             {
                 return noText;
             }
-            return AES.AESDecrypt(t);
+            return AESUtil.AESDecrypt(t);
         }
 
         public static bool WriteIniInt(string section, string key, int value)
@@ -91,7 +91,7 @@ namespace UnlockServer
 
         public static bool WriteSafeString(string section, string key, string value)
         {
-            return WriteIniData(section, key, AES.AESEncrypt(value), IniFileName);
+            return WriteIniData(section, key, AESUtil.AESEncrypt(value), IniFileName);
         }
 
 
