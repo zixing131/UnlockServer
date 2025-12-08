@@ -83,7 +83,7 @@ namespace UnlockServer
         private void UpdategRssi(string rssi)
         {
             txt_bleDevice.Invoke(new Action(()=>{ 
-                txt_bleDevice.Text = txt_bleDevice.Text.Split('-')[0] .Trim()+ " - " + rssi+ "dBm";
+                txt_bleDevice.Text = txt_bleDevice.Text.Split('-')[0] .Trim()+ " "+rssi + "dBm";
             }));
         }
 
@@ -167,11 +167,12 @@ namespace UnlockServer
                 } 
 
                 var address = txt_bleDevice.Text.Trim();
-                if (!UnlockManager.IsValidBluetoothAddress(address)){
+                //if (!UnlockManager.IsValidBluetoothAddress(address))
+                //{
 
-                    MessageBox.Show(this, "蓝牙地址无效！");
-                    return;
-                }
+                //    MessageBox.Show(this, "蓝牙地址无效！");
+                //    return;
+                //}
                 OperateIniFile.WriteSafeString("setting", "address", address); 
                 unlockManager.setunlockaddress(address);
                 if (int.TryParse(txtrssi.Text, out rssiyuzhi) == false || rssiyuzhi > 0 || rssiyuzhi < -128)
@@ -212,7 +213,7 @@ namespace UnlockServer
         {
             short rssi = eventArgs.RawSignalStrengthInDBm;
             var address = new BluetoothAddress(eventArgs.BluetoothAddress).ToString();
-            Console.WriteLine(address + "-----" + rssi);
+            LogHelper.WriteLine(address + "-----" + rssi);
             if (rssi <= -120)
             {
                 if(catchedDeviceRssi.ContainsKey(address))
@@ -304,11 +305,11 @@ namespace UnlockServer
             try 
             {  
                 string address= txt_bleDevice.Text.Trim();
-                if(!UnlockManager.IsValidBluetoothAddress(address))
-                {
-                    MessageBox.Show(this, "蓝牙地址无效！");
-                    return;
-                } 
+                //if(!UnlockManager.IsValidBluetoothAddress(address))
+                //{
+                //    MessageBox.Show(this, "蓝牙地址无效！");
+                //    return;
+                //} 
 
                 BluetoothAddress ad = BluetoothAddress.Parse(address).ToUInt64();
                 BluetoothLEDevice bluetoothLEDevice = BluetoothLEDevice.FromBluetoothAddressAsync(ad).GetAwaiter().GetResult();
@@ -386,7 +387,7 @@ namespace UnlockServer
             }
             catch (Exception ex)
             {
-                Console.WriteLine(ex.Message);
+                LogHelper.WriteLine(ex.Message);
             }
         }
 

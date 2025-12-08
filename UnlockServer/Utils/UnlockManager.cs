@@ -94,7 +94,7 @@ namespace UnlockServer
                         }
                         catch (Exception ex)
                         {
-                            Console.WriteLine("error:" + ex.Message);
+                            LogHelper.WriteLine("error:" + ex.Message);
                         }
                         Thread.Sleep(1000);
                     }
@@ -122,13 +122,13 @@ namespace UnlockServer
             if (isautolock == false && isautounlock == false)
             {
                 //没有启用
-                Console.WriteLine("未启用");
+                LogHelper.WriteLine("未启用");
                 return;
             }
             if (string.IsNullOrWhiteSpace(unlockaddress) || WanClient.isConfigVal() == false)
             {
                 //配置无效
-                Console.WriteLine("配置无效");
+                LogHelper.WriteLine("配置无效");
                 return;
             }
 
@@ -169,7 +169,7 @@ namespace UnlockServer
                 MybluetoothDevice device = Devices.FirstOrDefault(p => p.Address.ToLower() == unlockaddress);
                 if (device != null)
                 {
-                    Console.WriteLine("发现设备:" + device.Name + "[" + device.Address + "] " + device.Rssi + "dBm");
+                    LogHelper.WriteLine("发现设备:" + device.Name + "[" + device.Address + "] " + device.Rssi + "dBm");
                     UpdategRssi?.Invoke(device.Rssi.ToString());
                     if (device.Rssi < rssiyuzhi)
                     {
@@ -179,10 +179,10 @@ namespace UnlockServer
                             {
                                 if (sessionSwitchClass.isUnlockBySoft == false && manualunlock == true)
                                 {
-                                    Console.WriteLine("非软件解锁，不干预！");
+                                    LogHelper.WriteLine("非软件解锁，不干预！");
                                     return;
                                 }
-                                Console.WriteLine("信号强度弱，锁屏！");
+                                LogHelper.WriteLine("信号强度弱，锁屏！");
                                 sessionSwitchClass.dolocking = true;
                                 //WanClient.LockPc(); 
                                 LockByTimeOut();
@@ -200,12 +200,13 @@ namespace UnlockServer
                                 if (manuallock == true && sessionSwitchClass.isLockBySoft == false)
                                 {
                                     //不干预人工解锁
-                                    Console.WriteLine("非软件锁定，不干预！");
+                                    LogHelper.WriteLine("非软件锁定，不干预！");
                                     return;
                                 }
-                                Console.WriteLine("信号强度够且处于锁屏状态，解锁！");
+                                LogHelper.WriteLine("信号强度够且处于锁屏状态，解锁！");
 
                                 sessionSwitchClass.dounlocking = true;
+                                sessionSwitchClass.isLockBySoft = false;
                                 bool ret = UnLockByTimeOut();
 
                                 if (ret == false)
@@ -218,7 +219,7 @@ namespace UnlockServer
                         {
                             if (isautounlock)
                             {
-                                Console.WriteLine("信号强度够且但是未处于锁定状态！");
+                                LogHelper.WriteLine("信号强度够且但是未处于锁定状态！");
                             }
                         }
                     }
@@ -231,10 +232,10 @@ namespace UnlockServer
                         {
                             if (sessionSwitchClass.isUnlockBySoft == false && manualunlock == true)
                             {
-                                Console.WriteLine("非软件解锁，不干预人工解锁！");
+                                LogHelper.WriteLine("非软件解锁，不干预人工解锁！");
                                 return;
                             }
-                            Console.WriteLine("找不到设备，锁屏！");
+                            LogHelper.WriteLine("找不到设备，锁屏！");
                             sessionSwitchClass.dolocking = true;
                             LockByTimeOut();
                         }
@@ -253,35 +254,71 @@ namespace UnlockServer
         private object lockLock = new object();
 
         /// <summary>
-        /// 锁定超时，默认60秒最多锁定一次，防止找不到设备重复锁定导致电脑无法解锁
+        /// 锁定超时，默认10秒最多锁定一次，防止找不到设备重复锁定导致电脑无法解锁
         /// </summary>
-        private TimeSpan LockTimeOut = TimeSpan.FromMilliseconds(60 * 1000);
+        private TimeSpan LockTimeOut = TimeSpan.FromMilliseconds(10 * 1000);
 
         /// <summary>
-        /// 解锁超时，默认60秒最多解锁一次
+        /// 解锁超时，默认10秒最多解锁一次
         /// </summary>
-        private TimeSpan UnLockTimeOut = TimeSpan.FromMilliseconds(30 * 1000);
+        private TimeSpan UnLockTimeOut = TimeSpan.FromMilliseconds(10 * 1000);
 
         DateTime lastLockTime = DateTime.MinValue;
         DateTime lastUnLockTime = DateTime.MinValue;
 
         /// <summary>
-        /// 超时锁定
+        /// 锁定请求时间队列，用于防波动
+        /// </summary>
+        private Queue<DateTime> lockRequestQueue = new Queue<DateTime>();
+        
+        /// <summary>
+        /// 锁定防波动时间窗口（1分钟）
+        /// </summary>
+        private TimeSpan lockWindowTime = TimeSpan.FromMinutes(1);
+        
+        /// <summary>
+        /// 时间窗口内需要达到的锁定请求次数
+        /// </summary>
+        private const int requiredLockCount = 10;
+
+        /// <summary>
+        /// 超时锁定（防波动版本：1分钟内需要10次请求才执行锁定）
         /// </summary>
         private void LockByTimeOut()
         {
             DateTime now = DateTime.Now;
 
-            if ((now - lastLockTime) > LockTimeOut)
+            // 添加当前请求时间到队列
+            lockRequestQueue.Enqueue(now);
+
+            // 移除时间窗口之外的旧请求
+            while (lockRequestQueue.Count > 0 && (now - lockRequestQueue.Peek()) > lockWindowTime)
             {
-                //这里判断时间是否超过 LockTimeOut
-                lastLockTime = DateTime.Now;
-                WanClient.LockPc();
+                lockRequestQueue.Dequeue();
+            }
+
+            // 检查时间窗口内的请求次数
+            if (lockRequestQueue.Count >= requiredLockCount)
+            {
+                // 达到阈值，执行锁定
+                if ((now - lastLockTime) > LockTimeOut)
+                {
+                    LogHelper.WriteLine($"1分钟内锁定请求达到{lockRequestQueue.Count}次，执行锁定");
+                    lastLockTime = DateTime.Now;
+                    WanClient.LockPc();
+                    
+                    // 清空队列，避免重复锁定
+                    lockRequestQueue.Clear();
+                }
+            }
+            else
+            {
+                LogHelper.WriteLine($"锁定请求计数: {lockRequestQueue.Count}/{requiredLockCount}（需在1分钟内达到{requiredLockCount}次）");
             }
         }
 
         /// <summary>
-        /// 超时锁定
+        /// 超时解锁
         /// </summary>
         private bool UnLockByTimeOut()
         {
@@ -291,6 +328,10 @@ namespace UnlockServer
             {
                 //这里判断时间是否超过 UnLockTimeOut
                 lastUnLockTime = DateTime.Now;
+                
+                // 检测到设备，清空锁定请求队列
+                lockRequestQueue.Clear();
+                
                 return WanClient.UnlockPc();
             }
             return true;

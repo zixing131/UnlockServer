@@ -84,7 +84,7 @@ namespace UnlockServer
         public static void LockPc()
         {
 #if DEBUG
-            Console.WriteLine("调用锁定设备功能");
+            LogHelper.WriteLine("调用锁定设备功能");
             //return;
 #endif
             LockWorkStation();

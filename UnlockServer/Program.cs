@@ -37,7 +37,7 @@ namespace UnlockServer
             ishideRun = args.Contains("hide");
             if (checkIsSingle()==false)
             {
-                Console.WriteLine("软件已经启动！");
+                LogHelper.WriteLine("软件已经启动！");
                 if(ishideRun ==false)
                 {
                     MessageBox.Show("软件已经启动！");

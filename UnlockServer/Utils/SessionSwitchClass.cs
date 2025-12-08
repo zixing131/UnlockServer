@@ -20,7 +20,7 @@ namespace UnlockServer
         public Action SessionLockAction { get; set; }
 
         public bool isUnlockBySoft = false;
-        public bool isLockBySoft = false;
+        public bool isLockBySoft = true;
         public bool dolocking = false;
         public bool dounlocking = false;
 

@@ -153,6 +153,7 @@
       <DependentUpon>Form1.cs</DependentUpon>
     </Compile>
     <Compile Include="Beans\MybluetoothDevice.cs" />
+    <Compile Include="Utils\LogHelper.cs" />
     <Compile Include="Utils\OperateIniFile.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
