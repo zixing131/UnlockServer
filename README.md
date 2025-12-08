@@ -1,7 +1,14 @@
 # UnlockServer
 UnlockServer 一个蓝牙设备解锁锁定电脑的小工具
 
+
 更新说明：
+
+v2.0版本：使用wpf重构，优化使用体验
+
+<img width="840" height="1620" alt="bb8f9b706f8561e0675ace4010c8bfe6" src="https://github.com/user-attachments/assets/92052b94-ce97-472a-8302-10db1c97d28b" />
+
+
 v1.4：
 1.添加锁屏超时（指定时间内最多锁屏一次，默认60秒）
 2.添加解锁超时（指定时间内最多解锁一次，默认30秒）
