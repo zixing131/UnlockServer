@@ -357,8 +357,7 @@ namespace UnlockServer
 
             if (lstbldevice.SelectedItem is DeviceListItem it)
             {
-                address = it.Name + "[" + it.Address+ "]"; // 返回纯地址
-                //address = it.Address; // 返回纯地址
+                address = it.Address;
                 try { OperateIniFile.WriteSafeString("setting", "address", address); } catch { }
                 DialogResult = DialogResult.OK;
             }
