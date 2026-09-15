@@ -1,181 +1,143 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using InTheHand.Net.Bluetooth;
+using UnlockServer.Models;
+using UnlockServer.Services;
 using UnlockServer.Views;
 
 namespace UnlockServer
 {
-    /// <summary>
-    /// 解锁管理类
-    /// </summary>
     public class UnlockManager
     {
-        #region 字段
-
-        private BluetoothDiscover bluetoothDiscover;
+        private UnlockServer.Services.BluetoothService _bluetooth;
         public SessionSwitchClass sessionSwitchClass;
 
-        public bool isautolock = false;
-        public bool isautounlock = false;
+        public bool isautolock;
+        public bool isautounlock;
         public bool manuallock = true;
-        public bool manualunlock = false;
-        public int bletype = 1;
-        public int rssiyuzhi = -90;
+        public bool manualunlock;
+        public int bletype;
+        public int rssiyuzhi = -70;
+        public int hysteresisDb = 8;
+        public int presenceTimeout = 8;
+        public bool requireAllDevices;
+        public bool useLocalUnlock = true;
 
-        /// <summary>
-        /// RSSI 更新回调
-        /// 参数：显示文本, 是否为真实RSSI值
-        /// </summary>
         public Action<string, bool> UpdategRssi;
+        public Action<string, short, bool, string> UpdateDevicePresence;
 
-        private string unlockaddress = "";
-        private string normalizedUnlockAddress = "";
-        private bool isrunning = false;
+        private readonly List<BoundDevice> _bound = new List<BoundDevice>();
+        private readonly Dictionary<string, bool> _inRangeByAddress = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        private bool isrunning;
 
-        private int locktimecount = 0;
-        private bool isunlockfail = false;
+        private int locktimecount;
+        private bool isunlockfail;
         private readonly object lockLock = new object();
 
-        // 锁屏延迟：不在范围内持续多少秒后锁屏
-        private TimeSpan LockDelayTime = TimeSpan.FromSeconds(20);
-        // 解锁延迟：在范围内持续多少秒后解锁
-        private TimeSpan UnlockDelayTime = TimeSpan.FromSeconds(10);
-        // 防止重复操作的冷却时间
-        private TimeSpan LockCooldown = TimeSpan.FromSeconds(30);
-        
-        /// <summary>
-        /// 设置锁定延迟（秒）
-        /// </summary>
+        private TimeSpan LockDelayTime = TimeSpan.FromSeconds(15);
+        private TimeSpan UnlockDelayTime = TimeSpan.FromSeconds(3);
+        private TimeSpan LockCooldown = TimeSpan.FromSeconds(20);
+        private TimeSpan UnlockCooldown = TimeSpan.FromSeconds(8);
+
         public int lockDelay
         {
             get => (int)LockDelayTime.TotalSeconds;
-            set => LockDelayTime = TimeSpan.FromSeconds(value > 0 ? value : 20);
+            set => LockDelayTime = TimeSpan.FromSeconds(value > 0 ? value : 15);
         }
-        
-        /// <summary>
-        /// 设置解锁延迟（秒）
-        /// </summary>
+
         public int unlockDelay
         {
             get => (int)UnlockDelayTime.TotalSeconds;
-            set => UnlockDelayTime = TimeSpan.FromSeconds(value > 0 ? value : 10);
+            set => UnlockDelayTime = TimeSpan.FromSeconds(value > 0 ? value : 3);
         }
-        private TimeSpan UnlockCooldown = TimeSpan.FromSeconds(15);
-        
+
         private DateTime lastLockTime = DateTime.MinValue;
         private DateTime lastUnLockTime = DateTime.MinValue;
-        
-        // 设备离开/进入范围的时间追踪
-        private DateTime? _deviceLeftTime = null;      // 设备离开的时间
-        private DateTime? _deviceEnteredTime = null;   // 设备进入范围的时间
+        private DateTime? _deviceLeftTime;
+        private DateTime? _deviceEnteredTime;
+        private DateTime _lastTickLog = DateTime.MinValue;
+        private bool _combinedInRange;
+        private volatile bool _unlockTestRunning;
+        private const int ScanOutageGraceSeconds = 40;
+        private DateTime _lastSoftwareLockTime = DateTime.MinValue;
+        private DateTime _suppressLockUntil = DateTime.MinValue;
 
-        // 缓存最后一次有效的 RSSI
-        private short _lastKnownRssi = -100;
-        private DateTime _lastRssiUpdate = DateTime.MinValue;
-        private readonly TimeSpan _rssiTimeout = TimeSpan.FromSeconds(5); // 缩短到5秒
-        
-        // 设备状态
-        private bool _deviceInRange = false;
-        private bool _lastIsRealRssi = false;
-
-        #endregion
-
-        #region 公共方法
-
-        /// <summary>
-        /// 设置解锁设备地址
-        /// </summary>
-        public void setunlockaddress(string address)
-        {
-            try
-            {
-                // 尝试从 "Name[AA:BB:CC:DD:EE:FF]" 格式中提取地址
-                var match = Regex.Match(address ?? "", @"\[([0-9A-Fa-f:]+)\]");
-                if (match.Success)
-                {
-                    address = match.Groups[1].Value;
-                }
-            }
-            catch { }
-
-            unlockaddress = address ?? "";
-            normalizedUnlockAddress = NormalizeAddress(address);
-
-            // 更新 BluetoothDiscover 的目标地址
-            bluetoothDiscover?.SetTargetAddress(normalizedUnlockAddress);
-
-            LogHelper.WriteLine($"设置解锁设备地址: {normalizedUnlockAddress}");
-        }
-
-        /// <summary>
-        /// 验证蓝牙地址格式
-        /// </summary>
         public static bool IsValidBluetoothAddress(string address)
         {
-            if (string.IsNullOrEmpty(address))
-                return false;
-
-            string pattern = @"^([0-9A-Fa-f]{2}[:-]?){5}[0-9A-Fa-f]{2}$";
-            return Regex.IsMatch(address, pattern);
+            return !string.IsNullOrEmpty(address) &&
+                   System.Text.RegularExpressions.Regex.IsMatch(address, @"^([0-9A-Fa-f]{2}[:-]?){5}[0-9A-Fa-f]{2}$");
         }
 
-        /// <summary>
-        /// 启动监控
-        /// </summary>
+        public void SetBoundDevices(IEnumerable<BoundDevice> devices)
+        {
+            var previous = new Dictionary<string, bool>(_inRangeByAddress, StringComparer.OrdinalIgnoreCase);
+            _bound.Clear();
+            _inRangeByAddress.Clear();
+            if (devices != null)
+            {
+                foreach (var d in devices)
+                {
+                    if (d == null || string.IsNullOrWhiteSpace(d.Address)) continue;
+                    d.Address = BluetoothDiscover.NormalizeAddress(d.Address) ?? d.Address;
+                    _bound.Add(d);
+                    if (previous.TryGetValue(d.Address, out var wasInRange))
+                        _inRangeByAddress[d.Address] = wasInRange;
+                }
+            }
+
+            bletype = ResolveScanType();
+            if (_bluetooth != null)
+            {
+                _bluetooth.BluetoothType = bletype;
+                _bluetooth.PinAddresses(_bound.Where(x => x.Enabled).Select(x => x.Address));
+            }
+            LogHelper.WriteLine($"绑定设备 {_bound.Count} 台，扫描模式 {bletype}");
+        }
+
+        public void setunlockaddress(string address)
+        {
+            if (string.IsNullOrWhiteSpace(address)) return;
+            SetBoundDevices(new[]
+            {
+                new BoundDevice { Address = address, Enabled = true, BluetoothType = bletype == 1 ? 1 : 2 }
+            });
+        }
+
         public void Start()
         {
             sessionSwitchClass = new SessionSwitchClass();
-
             try
             {
-                bluetoothDiscover = new BluetoothDiscover(bletype);
-
-                // 订阅 RSSI 更新事件
-                bluetoothDiscover.OnRssiUpdated += OnRssiUpdatedHandler;
-                
-                // 订阅设备状态变化事件
-                bluetoothDiscover.OnDeviceStatusChanged += OnDeviceStatusChangedHandler;
-
-                // 设置目标地址
-                if (!string.IsNullOrEmpty(normalizedUnlockAddress))
+                bletype = ResolveScanType();
+                _bluetooth = UnlockServer.Services.BluetoothService.Shared;
+                _bluetooth.BluetoothType = bletype;
+                _bluetooth.PinAddresses(_bound.Where(x => x.Enabled).Select(x => x.Address));
+                sessionSwitchClass.SessionLockAction = () => _bluetooth?.NotifySessionLocked();
+                sessionSwitchClass.SessionUnlockAction = () =>
                 {
-                    bluetoothDiscover.SetTargetAddress(normalizedUnlockAddress);
-                }
+                    _bluetooth?.NotifySessionUnlocked();
+                    HandleUserUnlockAfterSoftwareLock();
+                };
+                _bluetooth.AddScanUser();
 
-                bluetoothDiscover.StartDiscover();
-
-                // 检查蓝牙适配器
-                BluetoothRadio radio = BluetoothRadio.Default;
+                var radio = BluetoothRadio.Default;
                 if (radio == null)
                 {
-                    Application.Current?.Dispatcher?.Invoke(() =>
-                    {
-                        MessageDialog.ShowError("没有找到本机蓝牙设备！");
-                    });
+                    Application.Current?.Dispatcher?.Invoke(() => MessageDialog.ShowError("没有找到本机蓝牙设备！"));
                     return;
                 }
 
-                LogHelper.WriteLine($"蓝牙适配器: {radio.Name}, 模式: {radio.Mode}");
-
-                // 延迟启动监控循环
-                Task.Delay(3000).ContinueWith((r) =>
+                Task.Delay(2000).ContinueWith(r =>
                 {
                     isrunning = true;
                     while (isrunning)
                     {
-                        try
-                        {
-                            Tick();
-                        }
-                        catch (Exception ex)
-                        {
-                            LogHelper.WriteLine($"监控循环错误: {ex.Message}");
-                        }
+                        try { Tick(); }
+                        catch (Exception ex) { LogHelper.WriteLine($"监控循环错误: {ex.Message}"); }
                         Thread.Sleep(1000);
                     }
                 }, TaskContinuationOptions.LongRunning);
@@ -186,341 +148,373 @@ namespace UnlockServer
             {
                 LogHelper.WriteLine($"启动蓝牙监控失败: {ex.Message}");
                 Application.Current?.Dispatcher?.Invoke(() =>
-                {
-                    MessageDialog.ShowError("启动蓝牙监控失败，可能没有蓝牙硬件或者不兼容！");
-                });
+                    MessageDialog.ShowError("启动蓝牙监控失败，可能没有蓝牙硬件或者不兼容！"));
             }
         }
 
-        /// <summary>
-        /// 停止监控
-        /// </summary>
         public void Stop()
         {
             isrunning = false;
             sessionSwitchClass?.Close();
-
-            if (bluetoothDiscover != null)
-            {
-                bluetoothDiscover.OnRssiUpdated -= OnRssiUpdatedHandler;
-                bluetoothDiscover.OnDeviceStatusChanged -= OnDeviceStatusChangedHandler;
-                bluetoothDiscover.StopDiscover();
-            }
-
+            _bluetooth?.RemoveScanUser();
             LogHelper.WriteLine("解锁监控已停止");
         }
 
-        #endregion
+        public void ApplyRuntimeSettings(int threshold, int hysteresis, int timeout, int lockSec, int unlockSec,
+            bool autoLock, bool autoUnlock, bool manualLock, bool manualUnlock, bool requireAll, bool localUnlock)
+        {
+            rssiyuzhi = threshold;
+            hysteresisDb = hysteresis < 0 ? 0 : hysteresis;
+            presenceTimeout = timeout;
+            lockDelay = lockSec;
+            unlockDelay = unlockSec;
+            isautolock = autoLock;
+            isautounlock = autoUnlock;
+            manuallock = manualLock;
+            manualunlock = manualUnlock;
+            requireAllDevices = requireAll;
+            useLocalUnlock = localUnlock;
+        }
 
-        #region 私有方法
+        private int ResolveScanType()
+        {
+            var enabled = _bound.Where(d => d.Enabled).ToList();
+            if (enabled.Count == 0) return 0;
+            bool hasClassic = enabled.Any(d => d.BluetoothType == 1);
+            bool hasBle = enabled.Any(d => d.BluetoothType != 1);
+            if (hasClassic && hasBle) return 0;
+            return hasClassic ? 1 : 2;
+        }
 
-        /// <summary>
-        /// RSSI 更新处理
-        /// </summary>
         private void OnRssiUpdatedHandler(string address, short rssi, bool isRealRssi)
         {
-            if (address.Equals(normalizedUnlockAddress, StringComparison.OrdinalIgnoreCase))
-            {
-                _lastKnownRssi = rssi;
-                _lastRssiUpdate = DateTime.Now;
-                _deviceInRange = rssi > -100;
-                _lastIsRealRssi = isRealRssi;
-                
-                // 根据是否为真实值决定显示内容
-                if (isRealRssi)
-                {
-                    // 真实 RSSI 值
-                    UpdategRssi?.Invoke($"{rssi} dBm", true);
-                }
-                else
-                {
-                    // 模拟值，显示状态
-                    var statusText = rssi > -100 ? "✓ 在范围内" : "✗ 不在范围";
-                    UpdategRssi?.Invoke(statusText, false);
-                }
-            }
+            var text = isRealRssi && rssi > -100 ? $"{rssi} dBm" : (rssi > -100 ? "在范围内" : "不在范围");
+            UpdateDevicePresence?.Invoke(address, rssi, rssi > -100, text);
         }
 
-        /// <summary>
-        /// 设备状态变化处理
-        /// </summary>
         private void OnDeviceStatusChangedHandler(string address, bool isInRange)
         {
-            if (address.Equals(normalizedUnlockAddress, StringComparison.OrdinalIgnoreCase))
-            {
-                _deviceInRange = isInRange;
-                LogHelper.WriteLine($"设备 {address} 状态: {(isInRange ? "在范围内" : "不在范围内")}");
-            }
+            LogHelper.WriteLine($"设备 {address} 观测状态: {(isInRange ? "在范围内" : "不在范围内")}");
         }
 
-        /// <summary>
-        /// 监控循环（每秒执行一次）
-        /// </summary>
         private void Tick()
         {
-            // 调试：每30秒输出一次 Tick 状态
-            if (DateTime.Now.Second % 30 == 0)
-            {
-                LogHelper.WriteLine($"Tick状态: autolock={isautolock}, autounlock={isautounlock}, address={normalizedUnlockAddress}");
-            }
-            
-            if (!isautolock && !isautounlock)
-            {
-                // 自动锁屏和自动解锁都未启用
-                return;
-            }
-
-            if (string.IsNullOrWhiteSpace(normalizedUnlockAddress))
-            {
-                // 每30秒才输出一次日志，避免刷屏
-                if (DateTime.Now.Second % 30 == 0)
-                {
-                    LogHelper.WriteLine("Tick: 未设置解锁设备地址");
-                }
-                return;
-            }
-            
-            // 服务器配置检查移到解锁逻辑中，锁屏不需要服务器
+            var enabled = _bound.Where(d => d.Enabled).ToList();
+            if (enabled.Count == 0) return;
 
             lock (lockLock)
             {
-                bool islocked = WanClient.IsSessionLocked();
-
-                if (!islocked)
-                {
-                    isunlockfail = false;
-                }
-
+                bool islocked = (sessionSwitchClass != null && sessionSwitchClass.IsLocked)
+                    || WanClient.IsSessionLocked();
+                if (!islocked) isunlockfail = false;
                 if (isunlockfail)
                 {
                     locktimecount++;
-                    return;
-                }
-
-                if (locktimecount >= 120)
-                {
+                    if (locktimecount < 30) return;
                     isunlockfail = false;
                     locktimecount = 0;
                 }
+                if (_bluetooth == null) return;
 
-                if (bluetoothDiscover == null) return;
+                var snapshot = _bluetooth.GetDevices();
+                bool scanHealthy = _bluetooth.IsAdvertisementAlive;
+                int scanSilence = _bluetooth.ScanSilenceSeconds;
+                int inRangeCount = 0;
+                short bestRssi = -100;
 
-                var devices = bluetoothDiscover.getAllDevice();
-                var device = devices.FirstOrDefault(p =>
-                    p.Address.Equals(normalizedUnlockAddress, StringComparison.OrdinalIgnoreCase));
-
-                // 判断设备是否在范围内
-                bool isInRange = false;
-                short currentRssi = -100;
-                string rangeReason = "";
-
-                if (device != null)
+                foreach (var bound in enabled)
                 {
-                    currentRssi = device.Rssi;
-                    
-                    // 优先使用 device.IsInRange（由 BluetoothDiscover 维护的连接测试结果）
-                    // 连接测试是最可靠的判断依据
-                    if (device.IsInRange)
+                    var found = snapshot.FirstOrDefault(p =>
+                        p.Address.Equals(bound.Address, StringComparison.OrdinalIgnoreCase));
+
+                    bool inRange;
+                    short rssi = -100;
+                    bool real = false;
+                    string status;
+                    bool connected = found?.IsConnected == true || _bluetooth.IsAddressConnected(bound.Address);
+
+                    bool holdPresence = islocked
+                        || connected
+                        || _bluetooth.IsRefreshing
+                        || _bluetooth.LooksLikeScanStall();
+
+                    if (connected)
                     {
-                        // 设备在范围内（连接测试成功）
-                        // 检查是否有有效的真实 RSSI（在合理范围内：-20 到 -90 之间）
-                        bool isValidRssi = currentRssi >= -90 && currentRssi <= -20;
-                        
-                        if (isValidRssi && currentRssi < rssiyuzhi)
+                        if (found != null)
                         {
-                            // 有有效真实 RSSI 但信号弱，不在范围
-                            isInRange = false;
-                            rangeReason = $"真实RSSI {currentRssi}dBm < {rssiyuzhi}dBm";
+                            rssi = found.Rssi;
+                            real = found.Rssi > -100 && found.LastSeen != DateTime.MinValue;
+                        }
+                        inRange = true;
+                        status = real && rssi > -100 ? $"{rssi} dBm" : "已连接";
+                    }
+                    else if (found == null)
+                    {
+                        if (holdPresence && _inRangeByAddress.TryGetValue(bound.Address, out var prevMissing))
+                        {
+                            inRange = prevMissing;
+                            status = islocked ? "锁屏保持" : "扫描恢复中";
                         }
                         else
                         {
-                            // 连接测试成功就认为在范围内
-                            // 无效 RSSI（-128, -100, -40, 0 等）不影响判断
-                            isInRange = true;
-                            rangeReason = isValidRssi 
-                                ? $"真实RSSI {currentRssi}dBm >= {rssiyuzhi}dBm"
-                                : "连接测试成功";
+                            inRange = false;
+                            status = "未发现";
+                        }
+                    }
+                    else if (found.LastSeen == DateTime.MinValue && found.Rssi <= -100)
+                    {
+                        if (holdPresence && _inRangeByAddress.TryGetValue(bound.Address, out var prevWait))
+                        {
+                            inRange = prevWait;
+                            status = "扫描恢复中";
+                        }
+                        else
+                        {
+                            inRange = false;
+                            status = "等待信号";
                         }
                     }
                     else
                     {
-                        // 设备不在范围内（连接测试失败）
-                        isInRange = false;
-                        rangeReason = "连接测试失败";
+                        rssi = found.Rssi;
+                        real = rssi > -100 && found.LastSeen != DateTime.MinValue;
+                        var freshWindow = Math.Max(presenceTimeout, 30);
+                        var stale = found.LastSeen == DateTime.MinValue ||
+                                    (DateTime.Now - found.LastSeen).TotalSeconds > freshWindow;
+                        if (stale)
+                        {
+                            if (holdPresence && _inRangeByAddress.TryGetValue(bound.Address, out var prevStale))
+                            {
+                                inRange = prevStale;
+                                status = islocked ? (rssi > -100 ? $"{rssi} dBm · 锁屏保持" : "锁屏保持") : "扫描恢复中";
+                            }
+                            else
+                            {
+                                inRange = false;
+                                status = "信号超时";
+                            }
+                        }
+                        else
+                        {
+                            _inRangeByAddress.TryGetValue(bound.Address, out var prev);
+                            inRange = ApplyHysteresis(bound.Address, rssi, real, rssi > -100, prev);
+                            status = real ? $"{rssi} dBm" : "在附近";
+                        }
                     }
+
+                    _inRangeByAddress[bound.Address] = inRange;
+                    if (inRange)
+                    {
+                        inRangeCount++;
+                        if (rssi > bestRssi) bestRssi = rssi;
+                    }
+
+                    UpdateDevicePresence?.Invoke(bound.Address, rssi, inRange, status);
                 }
+
+                bool isInRange = requireAllDevices ? inRangeCount == enabled.Count : inRangeCount > 0;
+                _combinedInRange = isInRange;
+
+                if (!scanHealthy)
+                    UpdategRssi?.Invoke($"扫描恢复中  ·  {inRangeCount}/{enabled.Count}", isInRange);
+                else if (isInRange && bestRssi > -100)
+                    UpdategRssi?.Invoke($"{inRangeCount}/{enabled.Count}  ·  {bestRssi} dBm", true);
                 else
+                    UpdategRssi?.Invoke(isInRange ? $"✓ {inRangeCount}/{enabled.Count} 在范围内" : $"✗ {inRangeCount}/{enabled.Count} 在范围内", false);
+
+                var shouldLog = (DateTime.Now - _lastTickLog).TotalSeconds >= 15;
+                if (shouldLog)
                 {
-                    // 设备不在列表中
-                    isInRange = _deviceInRange;  // 使用上次的状态
-                    rangeReason = "设备未在列表中";
+                    _lastTickLog = DateTime.Now;
+                    LogHelper.WriteLine(scanHealthy
+                        ? $"监控: {inRangeCount}/{enabled.Count} 在范围内"
+                        : $"监控: 扫描暂无广播 {scanSilence}s，保持上次状态 {inRangeCount}/{enabled.Count}");
                 }
-                
-                // 同步更新 UI 显示（确保 UI 和判断逻辑一致）
-                _deviceInRange = isInRange;
+
+                if (!isautolock && !isautounlock)
+                    return;
+
+                if (_unlockTestRunning)
+                    return;
+
                 if (isInRange)
                 {
-                    // 有有效 RSSI 显示 RSSI，否则显示"在范围内"
-                    bool isValidRssi = currentRssi >= -90 && currentRssi <= -20;
-                    if (isValidRssi)
-                    {
-                        UpdategRssi?.Invoke($"{currentRssi} dBm", true);
-                    }
-                    else
-                    {
-                        UpdategRssi?.Invoke("✓ 在范围内", false);
-                    }
-                }
-                else
-                {
-                    UpdategRssi?.Invoke("✗ 不在范围", false);
-                }
-                
-                if (isInRange)
-                {
-                    LogHelper.WriteLine($"设备在范围内: {device?.Name ?? "未知"}[{normalizedUnlockAddress}] ({rangeReason})");
-                    
-                    // 设备进入范围
-                    _deviceLeftTime = null;  // 清除离开时间
-                    
+                    _deviceLeftTime = null;
                     if (_deviceEnteredTime == null)
                     {
                         _deviceEnteredTime = DateTime.Now;
-                        LogHelper.WriteLine("设备刚进入范围，开始计时...");
+                        LogHelper.WriteLine("设备进入范围，开始解锁计时");
                     }
-                    
-                    // 检查是否需要解锁（在范围内持续一段时间）
+
                     if (islocked && isautounlock)
                     {
-                        // 解锁需要服务器配置
-                        if (!WanClient.isConfigVal())
-                        {
-                            if (DateTime.Now.Second % 30 == 0)
-                            {
-                                LogHelper.WriteLine("解锁需要服务器配置，请在设置中配置服务器信息");
-                            }
-                            return;
-                        }
-                        
                         if (manuallock && !sessionSwitchClass.isLockBySoft)
                         {
-                            LogHelper.WriteLine("非软件锁定，不干预！");
+                            if (shouldLog) LogHelper.WriteLine("当前为人工锁定，已设置不干预");
                             return;
                         }
-                        
+
                         var timeInRange = DateTime.Now - _deviceEnteredTime.Value;
-                        if (timeInRange >= UnlockDelayTime)
+                        if (timeInRange >= UnlockDelayTime &&
+                            (DateTime.Now - lastUnLockTime) >= UnlockCooldown)
                         {
-                            // 检查冷却时间
-                            if ((DateTime.Now - lastUnLockTime) >= UnlockCooldown)
-                            {
-                                LogHelper.WriteLine($"设备在范围内已 {timeInRange.TotalSeconds:F0} 秒，执行解锁！");
-                                sessionSwitchClass.dounlocking = true;
-                                sessionSwitchClass.isLockBySoft = false;
-                                
-                                bool ret = DoUnlock();
-                                if (!ret)
-                                {
-                                    isunlockfail = true;
-                                }
-                            }
-                        }
-                        else
-                        {
-                            LogHelper.WriteLine($"等待解锁: {timeInRange.TotalSeconds:F0}/{UnlockDelayTime.TotalSeconds} 秒");
+                            LogHelper.WriteLine("执行解锁");
+                            sessionSwitchClass.dounlocking = true;
+                            sessionSwitchClass.isLockBySoft = false;
+                            if (!DoUnlock()) isunlockfail = true;
                         }
                     }
+                }
+                else if (!scanHealthy)
+                {
+                    if (shouldLog) LogHelper.WriteLine("蓝牙扫描中断，暂不按离开处理");
                 }
                 else
                 {
-                    // 设备不在范围内
-                    LogHelper.WriteLine($"设备不在范围: {rangeReason}");
-                    
-                    _deviceEnteredTime = null;  // 清除进入时间
-                    
+                    _deviceEnteredTime = null;
                     if (_deviceLeftTime == null)
                     {
                         _deviceLeftTime = DateTime.Now;
-                        LogHelper.WriteLine("设备刚离开范围，开始计时...");
+                        LogHelper.WriteLine("设备离开范围，开始锁定计时");
                     }
-                    
-                    // 检查是否需要锁屏（不在范围内持续一段时间）
+
                     if (!islocked && isautolock)
                     {
-                        if (!sessionSwitchClass.isUnlockBySoft && manualunlock)
+                        if (DateTime.Now < _suppressLockUntil)
                         {
-                            LogHelper.WriteLine("非软件解锁，不干预人工解锁！");
+                            if (shouldLog) LogHelper.WriteLine("自动锁屏冷却中，暂不锁屏");
                             return;
                         }
-                        
-                        var timeOutOfRange = DateTime.Now - _deviceLeftTime.Value;
-                        if (timeOutOfRange >= LockDelayTime)
+
+                        if (!sessionSwitchClass.isUnlockBySoft && manualunlock)
                         {
-                            // 检查冷却时间
-                            if ((DateTime.Now - lastLockTime) >= LockCooldown)
-                            {
-                                LogHelper.WriteLine($"设备离开已 {timeOutOfRange.TotalSeconds:F0} 秒，执行锁屏！");
-                                sessionSwitchClass.dolocking = true;
-                                sessionSwitchClass.isLockBySoft = true;
-                                DoLock();
-                            }
+                            if (shouldLog) LogHelper.WriteLine("当前为人工解锁，已设置不干预");
+                            return;
                         }
-                        else
+
+                        var timeOutOfRange = DateTime.Now - _deviceLeftTime.Value;
+                        if (timeOutOfRange >= LockDelayTime &&
+                            (DateTime.Now - lastLockTime) >= LockCooldown)
                         {
-                            LogHelper.WriteLine($"等待锁屏: {timeOutOfRange.TotalSeconds:F0}/{LockDelayTime.TotalSeconds} 秒");
+                            LogHelper.WriteLine("执行锁屏");
+                            sessionSwitchClass.dolocking = true;
+                            sessionSwitchClass.isLockBySoft = true;
+                            DoLock();
                         }
                     }
                 }
             }
         }
 
-        /// <summary>
-        /// 规范化地址
-        /// </summary>
-        private static string NormalizeAddress(string address)
+        private bool ApplyHysteresis(string address, short rssi, bool hasRealRssi, bool presenceFlag, bool previous)
         {
-            if (string.IsNullOrEmpty(address)) return "";
-
-            // 尝试从 "Name[AA:BB:CC:DD:EE:FF]" 格式中提取
-            var match = Regex.Match(address, @"\[([0-9A-Fa-f:]+)\]");
-            if (match.Success)
-            {
-                address = match.Groups[1].Value;
-            }
-
-            // 移除所有非十六进制字符，然后重新格式化
-            var hex = Regex.Replace(address, "[^0-9A-Fa-f]", "");
-            if (hex.Length == 12)
-            {
-                return string.Join(":",
-                    Enumerable.Range(0, 6).Select(i => hex.Substring(i * 2, 2))).ToUpperInvariant();
-            }
-
-            return address.ToUpperInvariant();
+            if (!hasRealRssi) return presenceFlag;
+            var half = Math.Max(0, hysteresisDb) / 2;
+            if (!_inRangeByAddress.ContainsKey(address))
+                return rssi >= rssiyuzhi;
+            if (previous) return rssi >= rssiyuzhi - half;
+            return rssi >= rssiyuzhi + half;
         }
 
-        /// <summary>
-        /// 执行锁屏
-        /// </summary>
+        private void HandleUserUnlockAfterSoftwareLock()
+        {
+            if (sessionSwitchClass == null || sessionSwitchClass.isUnlockBySoft)
+                return;
+            if (_lastSoftwareLockTime == DateTime.MinValue)
+                return;
+            if ((DateTime.Now - _lastSoftwareLockTime).TotalSeconds > 20)
+                return;
+
+            _suppressLockUntil = DateTime.Now.AddMinutes(3);
+            LogHelper.WriteLine("用户立即解锁，暂停自动锁屏 3 分钟");
+            Application.Current?.Dispatcher?.BeginInvoke(new Action(() =>
+                ToastService.Show("已暂停自动锁屏 3 分钟")));
+        }
+
+        public void MarkSoftwareLock()
+        {
+            _lastSoftwareLockTime = DateTime.Now;
+            lastLockTime = DateTime.Now;
+        }
+
         private void DoLock()
         {
-            lastLockTime = DateTime.Now;
+            MarkSoftwareLock();
             WanClient.LockPc();
             LogHelper.WriteLine("已执行锁屏");
         }
 
-        /// <summary>
-        /// 执行解锁
-        /// </summary>
         private bool DoUnlock()
         {
             lastUnLockTime = DateTime.Now;
-            _deviceEnteredTime = null;  // 重置计时
-            var result = WanClient.UnlockPc();
-            LogHelper.WriteLine($"已执行解锁，结果: {result}");
-            return result;
+            _deviceEnteredTime = null;
+
+            if (useLocalUnlock && LocalUnlock.CanUnlock())
+            {
+                var local = LocalUnlock.RequestUnlock();
+                LogHelper.WriteLine($"本机解锁结果: {local}");
+                if (local) return true;
+            }
+
+            if (WanClient.isConfigVal())
+            {
+                var remote = WanClient.UnlockPc();
+                LogHelper.WriteLine($"远程解锁结果: {remote}");
+                return remote;
+            }
+
+            LogHelper.WriteLine("无法解锁：请先启用本机解锁，或配置远程解锁服务");
+            return false;
         }
 
-        #endregion
+        public bool BeginUnlockTest(int delaySeconds, out string error)
+        {
+            error = null;
+            if (_unlockTestRunning)
+            {
+                error = "已有解锁测试在进行。";
+                return false;
+            }
+
+            if (!LocalUnlock.CanUnlock() && !WanClient.isConfigVal())
+            {
+                error = "请先启用本机解锁，或配置远程解锁服务。";
+                return false;
+            }
+
+            if (sessionSwitchClass == null)
+                sessionSwitchClass = new SessionSwitchClass();
+
+            sessionSwitchClass.dolocking = true;
+            sessionSwitchClass.isLockBySoft = true;
+            _unlockTestRunning = true;
+
+            var wait = delaySeconds > 0 ? delaySeconds : 5;
+            Task.Run(() =>
+            {
+                try
+                {
+                    _bluetooth?.NotifySessionLocked();
+                    DoLock();
+                    Thread.Sleep(wait * 1000);
+                    sessionSwitchClass.dounlocking = true;
+                    var prevLocal = useLocalUnlock;
+                    useLocalUnlock = LocalUnlock.CanUnlock() || prevLocal;
+                    bool ok;
+                    try { ok = DoUnlock(); }
+                    finally { useLocalUnlock = prevLocal; }
+                    LogHelper.WriteLine($"解锁测试结果: {ok}");
+                }
+                catch (Exception ex)
+                {
+                    LogHelper.WriteLine($"解锁测试失败: {ex.Message}");
+                }
+                finally
+                {
+                    _unlockTestRunning = false;
+                }
+            });
+            return true;
+        }
     }
 }

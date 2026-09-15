@@ -1,4 +1,7 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Runtime.Serialization.Json;
 using UnlockServer.Models;
 
 namespace UnlockServer.Services
@@ -30,7 +33,7 @@ namespace UnlockServer.Services
                 settings.Username = OperateIniFile.ReadSafeString("setting", "us", "");
                 settings.Password = OperateIniFile.ReadSafeString("setting", "pd", "");
 
-                int.TryParse(OperateIniFile.ReadIni("setting", "rssi", "-90"), out int rssi);
+                int.TryParse(OperateIniFile.ReadIni("setting", "rssi", "-70"), out int rssi);
                 settings.RssiThreshold = rssi;
 
                 settings.DeviceAddress = OperateIniFile.ReadSafeString("setting", "address", "");
@@ -42,8 +45,24 @@ namespace UnlockServer.Services
                 settings.ManualUnlock = OperateIniFile.ReadIniInt("setting", "manualunlock", 0) == 1;
 
                 // 读取延迟设置
-                settings.LockDelay = OperateIniFile.ReadIniInt("setting", "lockdelay", 20);
-                settings.UnlockDelay = OperateIniFile.ReadIniInt("setting", "unlockdelay", 10);
+                settings.LockDelay = OperateIniFile.ReadIniInt("setting", "lockdelay", 15);
+                settings.UnlockDelay = OperateIniFile.ReadIniInt("setting", "unlockdelay", 3);
+                settings.HysteresisDb = OperateIniFile.ReadIniInt("setting", "hysteresis", 8);
+                settings.PresenceTimeout = OperateIniFile.ReadIniInt("setting", "presencetimeout", 8);
+                settings.RequireAllDevices = OperateIniFile.ReadIniInt("setting", "requireall", 0) == 1;
+                settings.UseLocalUnlock = OperateIniFile.ReadIniInt("setting", "localunlock", 1) == 1;
+
+                settings.Devices = LoadDevices();
+                if (settings.Devices.Count == 0 && !string.IsNullOrWhiteSpace(settings.DeviceAddress))
+                {
+                    settings.Devices.Add(new BoundDevice
+                    {
+                        Name = ExtractName(settings.DeviceAddress),
+                        Address = ExtractAddress(settings.DeviceAddress),
+                        BluetoothType = settings.BluetoothType,
+                        Enabled = true
+                    });
+                }
 
                 settings.AutoStart = AutoStartHelper.IsExists();
             }
@@ -77,14 +96,26 @@ namespace UnlockServer.Services
                 // 保存延迟设置
                 OperateIniFile.WriteIniInt("setting", "lockdelay", settings.LockDelay);
                 OperateIniFile.WriteIniInt("setting", "unlockdelay", settings.UnlockDelay);
+                OperateIniFile.WriteIniInt("setting", "hysteresis", settings.HysteresisDb);
+                OperateIniFile.WriteIniInt("setting", "presencetimeout", settings.PresenceTimeout);
+                OperateIniFile.WriteIniInt("setting", "requireall", settings.RequireAllDevices ? 1 : 0);
+                OperateIniFile.WriteIniInt("setting", "localunlock", settings.UseLocalUnlock ? 1 : 0);
+                SaveDevices(settings.Devices);
 
-                // 处理开机自启
+                if (settings.Devices != null && settings.Devices.Count > 0)
+                {
+                    var first = settings.Devices[0];
+                    settings.DeviceAddress = string.IsNullOrEmpty(first.Name)
+                        ? first.Address
+                        : $"{first.Name}[{first.Address}]";
+                    settings.BluetoothType = first.BluetoothType;
+                    OperateIniFile.WriteSafeString("setting", "address", settings.DeviceAddress);
+                    OperateIniFile.WriteIniInt("setting", "type", settings.BluetoothType);
+                }
+
                 if (settings.AutoStart)
                 {
-                    if (!AutoStartHelper.IsExists())
-                    {
-                        AutoStartHelper.AddStart();
-                    }
+                    AutoStartHelper.AddStart();
                 }
                 else
                 {
@@ -125,6 +156,57 @@ namespace UnlockServer.Services
         public void SaveBluetoothType(int type)
         {
             OperateIniFile.WriteIniInt("setting", "type", type);
+        }
+
+        private static string DevicesPath =>
+            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "devices.json");
+
+        private static List<BoundDevice> LoadDevices()
+        {
+            try
+            {
+                if (!File.Exists(DevicesPath))
+                    return new List<BoundDevice>();
+
+                var ser = new DataContractJsonSerializer(typeof(List<BoundDevice>));
+                using (var fs = File.OpenRead(DevicesPath))
+                {
+                    return (ser.ReadObject(fs) as List<BoundDevice>) ?? new List<BoundDevice>();
+                }
+            }
+            catch (Exception ex)
+            {
+                LogHelper.WriteLine($"加载设备列表失败: {ex.Message}");
+                return new List<BoundDevice>();
+            }
+        }
+
+        private static void SaveDevices(List<BoundDevice> devices)
+        {
+            try
+            {
+                var ser = new DataContractJsonSerializer(typeof(List<BoundDevice>));
+                using (var fs = File.Create(DevicesPath))
+                {
+                    ser.WriteObject(fs, devices ?? new List<BoundDevice>());
+                }
+            }
+            catch (Exception ex)
+            {
+                LogHelper.WriteLine($"保存设备列表失败: {ex.Message}");
+            }
+        }
+
+        private static string ExtractName(string input)
+        {
+            if (string.IsNullOrEmpty(input)) return "";
+            var start = input.LastIndexOf('[');
+            return start > 0 ? input.Substring(0, start) : "";
+        }
+
+        private static string ExtractAddress(string input)
+        {
+            return BluetoothDiscover.NormalizeAddress(input) ?? input;
         }
     }
 }

@@ -14,6 +14,7 @@ namespace UnlockServer.Models
         private string _type;
         private bool _isSelected;
         private bool _isPaired;
+        private bool _isConnected;
         private DateTime _lastSeen;
 
         /// <summary>
@@ -75,6 +76,12 @@ namespace UnlockServer.Models
         {
             get => _isPaired;
             set => SetProperty(ref _isPaired, value);
+        }
+
+        public bool IsConnected
+        {
+            get => _isConnected;
+            set => SetProperty(ref _isConnected, value);
         }
 
         /// <summary>

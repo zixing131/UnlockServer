@@ -1,198 +1,93 @@
 <Window x:Class="UnlockServer.Views.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:local="clr-namespace:UnlockServer.Views"
-        xmlns:vm="clr-namespace:UnlockServer.ViewModels"
         xmlns:converters="clr-namespace:UnlockServer.Converters"
-        mc:Ignorable="d"
-        Title="蓝牙解锁工具" 
-        Height="810" Width="420"
-        MinHeight="600" MinWidth="380"
+        Title="蓝牙解锁"
+        Height="720" Width="500"
+        MinHeight="620" MinWidth="460"
         WindowStartupLocation="CenterScreen"
         Background="Transparent"
         AllowsTransparency="True"
         WindowStyle="None"
         ResizeMode="NoResize"
         Closing="Window_Closing">
-    
+
     <Window.Resources>
         <converters:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
-        <converters:RssiToColorConverter x:Key="RssiToColorConverter"/>
     </Window.Resources>
-    
-    <!-- 主容器带圆角和阴影 -->
-    <Border Background="{StaticResource BackgroundBrush}" 
-            CornerRadius="12" 
-            Margin="10"
-            BorderBrush="{StaticResource BorderBrush}"
-            BorderThickness="1">
+
+    <Border Background="{StaticResource BackgroundBrush}" CornerRadius="14" Margin="10"
+            BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
         <Border.Effect>
-            <DropShadowEffect BlurRadius="20" ShadowDepth="0" Opacity="0.3" Color="Black"/>
+            <DropShadowEffect BlurRadius="20" ShadowDepth="0" Opacity="0.28" Color="Black"/>
         </Border.Effect>
-        
+
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
-            
-            <!-- 自定义标题栏 -->
-            <Border Grid.Row="0" Background="{StaticResource SurfaceBrush}" 
-                    CornerRadius="12,12,0,0" 
+
+            <Border Grid.Row="0" Background="{StaticResource SurfaceBrush}" CornerRadius="14,14,0,0"
                     MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
-                <Grid Margin="16,10">
+                <Grid Margin="18,12">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    
-                    <!-- Logo和标题 -->
-                    <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                        <Grid Width="32" Height="32">
-                            <Ellipse Fill="{StaticResource PrimaryGradientBrush}">
-                                <Ellipse.Effect>
-                                    <DropShadowEffect Color="{StaticResource PrimaryColor}" BlurRadius="8" Opacity="0.3" ShadowDepth="0"/>
-                                </Ellipse.Effect>
-                            </Ellipse>
-                            <TextBlock Text="🔓" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Grid>
-                        <StackPanel Margin="10,0,0,0" VerticalAlignment="Center">
-                            <TextBlock Text="蓝牙解锁工具" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource TextPrimaryBrush}"/>
-                            <TextBlock Text="v2.0" FontSize="9" Foreground="{StaticResource TextSecondaryBrush}"/>
-                        </StackPanel>
+                    <StackPanel>
+                        <TextBlock Text="蓝牙解锁" FontSize="16" FontWeight="SemiBold" Foreground="{StaticResource TextPrimaryBrush}"/>
+                        <TextBlock Text="v2.2  ·  多设备  ·  本机解锁" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,2,0,0"/>
                     </StackPanel>
-                    
-                    <!-- 状态指示 -->
-                    <Border Grid.Column="2" Background="{StaticResource CardBrush}" CornerRadius="10" Padding="8,3" Margin="0,0,10,0">
-                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                            <Ellipse Width="6" Height="6" Margin="0,0,5,0">
-                                <Ellipse.Style>
-                                    <Style TargetType="Ellipse">
-                                        <Setter Property="Fill" Value="{StaticResource TextDisabledBrush}"/>
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding IsMonitoring}" Value="True">
-                                                <Setter Property="Fill" Value="{StaticResource SuccessBrush}"/>
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </Ellipse.Style>
-                            </Ellipse>
-                            <TextBlock Text="{Binding StatusText}" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
-                        </StackPanel>
-                    </Border>
-                    
-                    <!-- 窗口控制按钮 -->
-                    <StackPanel Grid.Column="3" Orientation="Horizontal">
-                        <Button Content="─" Style="{StaticResource IconButtonStyle}" 
-                                Click="MinimizeButton_Click" 
-                                Width="30" Height="30" FontSize="12"/>
-                        <Button Content="✕" Style="{StaticResource IconButtonStyle}" 
-                                Click="CloseButton_Click"
-                                Width="30" Height="30" FontSize="12"/>
-                    </StackPanel>
-                </Grid>
-            </Border>
-            
-            <!-- 主内容区域 -->
-            <StackPanel Grid.Row="1" Margin="16,10,16,16">
-                
-                <!-- 设备状态卡片 -->
-                <Border Style="{StaticResource CardStyle}" Padding="14" Margin="0,0,0,10">
-                    <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
-                        
-                        <Grid Grid.Row="0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            
-                            <StackPanel Grid.Column="0">
-                                <TextBlock Text="当前设备" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
-                                <TextBlock Text="{Binding DeviceDisplayName}" 
-                                           Foreground="{StaticResource TextPrimaryBrush}" 
-                                           FontSize="14" FontWeight="Medium"
-                                           TextTrimming="CharacterEllipsis"/>
-                                <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
-                                    <TextBlock Text="信号: " FontSize="12" Foreground="{StaticResource TextSecondaryBrush}"/>
-                                    <TextBlock Text="{Binding CurrentRssi}" FontSize="12" FontWeight="Bold">
-                                        <TextBlock.Style>
-                                            <Style TargetType="TextBlock">
-                                                <Setter Property="Foreground" Value="{StaticResource ErrorBrush}"/>
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding IsDeviceInRange}" Value="True">
-                                                        <Setter Property="Foreground" Value="{StaticResource SuccessBrush}"/>
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </TextBlock.Style>
-                                    </TextBlock>
-                                </StackPanel>
-                            </StackPanel>
-                            
-                            <Button Grid.Column="1" 
-                                    Content="🔍 搜索" 
-                                    Style="{StaticResource SecondaryButtonStyle}"
-                                    Command="{Binding SearchDeviceCommand}"
-                                    Padding="12,6" FontSize="12"/>
-                        </Grid>
-                        
-                        <!-- 蓝牙类型显示（只读） -->
-                        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,10,0,0">
-                            <TextBlock Text="类型：" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" 
-                                       VerticalAlignment="Center"/>
-                            <Border Background="{StaticResource SurfaceBrush}" 
-                                    CornerRadius="4" Padding="8,4" Margin="4,0,0,0">
-                                <TextBlock FontSize="11" Foreground="{StaticResource TextPrimaryBrush}">
-                                    <TextBlock.Style>
-                                        <Style TargetType="TextBlock">
-                                            <Setter Property="Text" Value="📶 经典蓝牙"/>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal">
+                        <Border Background="{StaticResource CardBrush}" CornerRadius="10" Padding="10,4" Margin="0,0,8,0" VerticalAlignment="Center">
+                            <StackPanel Orientation="Horizontal">
+                                <Ellipse Width="7" Height="7" Margin="0,0,6,0">
+                                    <Ellipse.Style>
+                                        <Style TargetType="Ellipse">
+                                            <Setter Property="Fill" Value="{StaticResource TextDisabledBrush}"/>
                                             <Style.Triggers>
-                                                <DataTrigger Binding="{Binding IsBLE}" Value="True">
-                                                    <Setter Property="Text" Value="📡 BLE低功耗"/>
+                                                <DataTrigger Binding="{Binding IsMonitoring}" Value="True">
+                                                    <Setter Property="Fill" Value="{StaticResource SuccessBrush}"/>
                                                 </DataTrigger>
                                             </Style.Triggers>
                                         </Style>
-                                    </TextBlock.Style>
-                                </TextBlock>
-                            </Border>
-                        </StackPanel>
-                    </Grid>
-                </Border>
-                
-                <!-- 快捷操作 -->
-                <Grid Margin="0,0,0,10">
+                                    </Ellipse.Style>
+                                </Ellipse>
+                                <TextBlock Text="{Binding StatusText}" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
+                            </StackPanel>
+                        </Border>
+                        <Button Content="─" Style="{StaticResource IconButtonStyle}" Click="MinimizeButton_Click" Width="30" Height="30"/>
+                        <Button Content="✕" Style="{StaticResource IconButtonStyle}" Click="CloseButton_Click" Width="30" Height="30"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <Border Grid.Row="1" Margin="16,12,16,0" Background="{StaticResource CardBrush}" CornerRadius="12" Padding="14">
+                <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="8"/>
-                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    
-                    <Button Grid.Column="0" 
-                            Command="{Binding ToggleMonitoringCommand}"
-                            Style="{StaticResource PrimaryButtonStyle}"
-                            Padding="0,10">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Margin="0,0,6,0" VerticalAlignment="Center">
-                                <TextBlock.Style>
-                                    <Style TargetType="TextBlock">
-                                        <Setter Property="Text" Value="▶"/>
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding IsMonitoring}" Value="True">
-                                                <Setter Property="Text" Value="⏹"/>
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </TextBlock.Style>
-                            </TextBlock>
-                            <TextBlock VerticalAlignment="Center">
+                    <StackPanel>
+                        <TextBlock Text="当前状态" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
+                        <TextBlock Text="{Binding CurrentRssi}" FontSize="18" FontWeight="SemiBold" Margin="0,4,0,0">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Foreground" Value="{StaticResource ErrorBrush}"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsDeviceInRange}" Value="True">
+                                            <Setter Property="Foreground" Value="{StaticResource SuccessBrush}"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button Command="{Binding ToggleMonitoringCommand}" Style="{StaticResource PrimaryButtonStyle}" Padding="16,8" Margin="0,0,8,0">
+                            <TextBlock>
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
                                         <Setter Property="Text" Value="开始监控"/>
@@ -204,173 +99,294 @@
                                     </Style>
                                 </TextBlock.Style>
                             </TextBlock>
-                        </StackPanel>
-                    </Button>
-                    
-                    <Button Grid.Column="2" 
-                            Content="🔒 锁屏"
-                            Command="{Binding LockScreenCommand}"
-                            Style="{StaticResource SecondaryButtonStyle}"
-                            Padding="0,10"/>
+                        </Button>
+                        <Button Content="锁屏" Command="{Binding LockScreenCommand}" Style="{StaticResource SecondaryButtonStyle}" Padding="14,8"/>
+                    </StackPanel>
                 </Grid>
-                
-                <!-- 服务器设置卡片 -->
-                <Border Style="{StaticResource CardStyle}" Padding="14" Margin="0,0,0,10">
-                    <StackPanel>
-                        <TextBlock Text="服务器设置" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,12"/>
-                        
-                        <!-- 第一行：IP地址 和 端口 -->
-                        <Grid Margin="0,0,0,10">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="12"/>
-                                <ColumnDefinition Width="90"/>
-                            </Grid.ColumnDefinitions>
-                            
-                            <StackPanel Grid.Column="0">
-                                <TextBlock Text="IP 地址" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
-                                <TextBox Text="{Binding Settings.ServerIp, UpdateSourceTrigger=PropertyChanged}" 
-                                         Style="{StaticResource ModernTextBoxStyle}"/>
-                            </StackPanel>
-                            
-                            <StackPanel Grid.Column="2">
-                                <TextBlock Text="端口" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
-                                <TextBox Text="{Binding Settings.ServerPort, UpdateSourceTrigger=PropertyChanged}" 
-                                         Style="{StaticResource ModernTextBoxStyle}"/>
-                            </StackPanel>
-                        </Grid>
-                        
-                        <!-- 第二行：用户名 和 密码 -->
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="12"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
-                            
-                            <StackPanel Grid.Column="0">
-                                <TextBlock Text="用户名" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
-                                <TextBox Text="{Binding Settings.Username, UpdateSourceTrigger=PropertyChanged}" 
-                                         Style="{StaticResource ModernTextBoxStyle}"/>
-                            </StackPanel>
-                            
-                            <StackPanel Grid.Column="2">
-                                <TextBlock Text="密码" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
-                                <PasswordBox x:Name="PasswordBox"
-                                             Style="{StaticResource ModernPasswordBoxStyle}"
-                                             PasswordChanged="PasswordBox_PasswordChanged"/>
-                            </StackPanel>
-                        </Grid>
-                    </StackPanel>
+            </Border>
+
+            <Grid Grid.Row="2" Margin="16,12,16,16">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <Border Grid.Row="0" Background="{StaticResource SurfaceBrush}" CornerRadius="10" Padding="4" Margin="0,0,0,10">
+                    <UniformGrid Columns="3">
+                        <Button Content="设备" Command="{Binding SelectTabCommand}" CommandParameter="0">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource TabChipStyle}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsTabDevices}" Value="True">
+                                            <Setter Property="Background" Value="{StaticResource PrimaryBrush}"/>
+                                            <Setter Property="Foreground" Value="White"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                        <Button Content="解锁" Command="{Binding SelectTabCommand}" CommandParameter="1">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource TabChipStyle}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsTabUnlock}" Value="True">
+                                            <Setter Property="Background" Value="{StaticResource PrimaryBrush}"/>
+                                            <Setter Property="Foreground" Value="White"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                        <Button Content="规则" Command="{Binding SelectTabCommand}" CommandParameter="2">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource TabChipStyle}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsTabRules}" Value="True">
+                                            <Setter Property="Background" Value="{StaticResource PrimaryBrush}"/>
+                                            <Setter Property="Foreground" Value="White"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </UniformGrid>
                 </Border>
-                
-                <!-- 自动化设置卡片 -->
-                <Border Style="{StaticResource CardStyle}" Padding="14" Margin="0,0,0,10">
-                    <StackPanel>
-                        <Grid Margin="0,0,0,12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            
-                            <StackPanel Grid.Column="0">
-                                <TextBlock Text="信号阈值" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}"/>
-                                <TextBlock Text="低于此值触发锁屏" FontSize="10" Foreground="{StaticResource TextDisabledBrush}"/>
-                            </StackPanel>
-                            <StackPanel Grid.Column="1" Orientation="Horizontal">
-                                <TextBox Text="{Binding Settings.RssiThreshold, UpdateSourceTrigger=PropertyChanged}" 
-                                         Style="{StaticResource ModernTextBoxStyle}"
-                                         Width="50" TextAlignment="Center" Padding="6,4"/>
-                                <TextBlock Text="dBm" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" 
-                                           VerticalAlignment="Center" Margin="6,0,0,0"/>
-                            </StackPanel>
-                        </Grid>
-                        
-                        <!-- 延迟设置 -->
-                        <Grid Margin="0,0,0,12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            
-                            <StackPanel Grid.Column="0">
-                                <TextBlock Text="延迟设置" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}"/>
-                                <TextBlock Text="离开/进入后触发的等待时间" FontSize="10" Foreground="{StaticResource TextDisabledBrush}"/>
-                            </StackPanel>
-                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                                <TextBlock Text="锁定" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" 
-                                           VerticalAlignment="Center" Margin="0,0,4,0"/>
-                                <TextBox Text="{Binding Settings.LockDelay, UpdateSourceTrigger=PropertyChanged}" 
-                                         Style="{StaticResource ModernTextBoxStyle}" TextAlignment="Center"
-                                         Width="45" FontSize="13" Padding="4,4"/>
-                                <TextBlock Text="秒" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" 
-                                           VerticalAlignment="Center" Margin="4,0,12,0"/>
-                                <TextBlock Text="解锁" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" 
-                                           VerticalAlignment="Center" Margin="0,0,4,0"/>
-                                <TextBox Text="{Binding Settings.UnlockDelay, UpdateSourceTrigger=PropertyChanged}" 
-                                         Style="{StaticResource ModernTextBoxStyle}" TextAlignment="Center"
-                                         Width="45" FontSize="13" Padding="4,4"/>
-                                <TextBlock Text="秒" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" 
-                                           VerticalAlignment="Center" Margin="4,0,0,0"/>
-                            </StackPanel>
-                        </Grid>
-                        
-                        <!-- 开关选项 - 两列布局 -->
+
+                <!-- 设备 -->
+                <Grid Grid.Row="1" Visibility="{Binding IsTabDevices, Converter={StaticResource BoolToVisibilityConverter}}">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Border Background="{StaticResource CardBrush}" CornerRadius="12" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
                         <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="10"/>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="10"/>
-                                <RowDefinition Height="Auto"/>
-                            </Grid.RowDefinitions>
-                            
-                            <CheckBox Grid.Row="0" Grid.Column="0" Content="自动锁定" 
-                                      Style="{StaticResource ToggleSwitchStyle}"
-                                      IsChecked="{Binding Settings.AutoLock}"
-                                      FontSize="12"/>
-                            <CheckBox Grid.Row="0" Grid.Column="1" Content="自动解锁" 
-                                      Style="{StaticResource ToggleSwitchStyle}"
-                                      IsChecked="{Binding Settings.AutoUnlock}"
-                                      FontSize="12"/>
-                            
-                            <CheckBox Grid.Row="2" Grid.Column="0" Content="不干预手动锁定" 
-                                      Style="{StaticResource ToggleSwitchStyle}"
-                                      IsChecked="{Binding Settings.ManualLock}"
-                                      FontSize="12"/>
-                            <CheckBox Grid.Row="2" Grid.Column="1" Content="不干预手动解锁" 
-                                      Style="{StaticResource ToggleSwitchStyle}"
-                                      IsChecked="{Binding Settings.ManualUnlock}"
-                                      FontSize="12"/>
-                            
-                            <CheckBox Grid.Row="4" Grid.Column="0" Content="开机自启" 
-                                      Style="{StaticResource ToggleSwitchStyle}"
-                                      IsChecked="{Binding Settings.AutoStart}"
-                                      FontSize="12"/>
+                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                                        Visibility="{Binding HasNoDevices, Converter={StaticResource BoolToVisibilityConverter}}">
+                                <TextBlock Text="还没有绑定设备" Foreground="{StaticResource TextSecondaryBrush}" HorizontalAlignment="Center"/>
+                                <TextBlock Text="可同时绑定手机、手表等多台" FontSize="11" Foreground="{StaticResource TextDisabledBrush}" Margin="0,6,0,0" HorizontalAlignment="Center"/>
+                            </StackPanel>
+                            <ListBox ItemsSource="{Binding BoundDevices}" Style="{StaticResource ModernListBoxStyle}" Margin="8"
+                                     Visibility="{Binding HasNoDevices, Converter={StaticResource BoolToVisibilityConverter}, ConverterParameter=Inverse}">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Ellipse Width="8" Height="8" Margin="0,0,10,0" VerticalAlignment="Center">
+                                                <Ellipse.Style>
+                                                    <Style TargetType="Ellipse">
+                                                        <Setter Property="Fill" Value="{StaticResource TextDisabledBrush}"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsInRange}" Value="True">
+                                                                <Setter Property="Fill" Value="{StaticResource SuccessBrush}"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Ellipse.Style>
+                                            </Ellipse>
+                                            <StackPanel Grid.Column="1">
+                                                <TextBlock Text="{Binding DisplayName}" Foreground="{StaticResource TextPrimaryBrush}" FontWeight="Medium" FontSize="13"/>
+                                                <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
+                                                    <TextBlock Text="{Binding TypeLabel}" FontSize="10" Foreground="{StaticResource TextDisabledBrush}"/>
+                                                    <TextBlock Text="  ·  " FontSize="10" Foreground="{StaticResource TextDisabledBrush}"/>
+                                                    <TextBlock Text="{Binding Address}" FontSize="10" Foreground="{StaticResource TextDisabledBrush}"/>
+                                                </StackPanel>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="2" VerticalAlignment="Center" Margin="8,0">
+                                                <TextBlock Text="{Binding StatusText}" FontSize="11" HorizontalAlignment="Right">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Foreground" Value="{StaticResource TextDisabledBrush}"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsInRange}" Value="True">
+                                                                    <Setter Property="Foreground" Value="{StaticResource SuccessBrush}"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                                <CheckBox Content="启用" IsChecked="{Binding Enabled}" Style="{StaticResource ToggleSwitchStyle}" FontSize="11" Margin="0,6,0,0"/>
+                                            </StackPanel>
+                                            <Button Grid.Column="3" Content="移除" Style="{StaticResource GhostButtonStyle}"
+                                                    Command="{Binding DataContext.RemoveDeviceCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    CommandParameter="{Binding}" VerticalAlignment="Center"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
                         </Grid>
+                    </Border>
+                    <Grid Grid.Row="1" Margin="0,10,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="8"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <CheckBox Content="需要全部设备都在附近" Style="{StaticResource ToggleSwitchStyle}"
+                                  IsChecked="{Binding Settings.RequireAllDevices}" FontSize="12"/>
+                        <Button Grid.Column="2" Content="添加设备" Style="{StaticResource SecondaryButtonStyle}"
+                                Command="{Binding SearchDeviceCommand}" Padding="14,8"/>
+                    </Grid>
+                </Grid>
+
+                <!-- 解锁 -->
+                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                              Visibility="{Binding IsTabUnlock, Converter={StaticResource BoolToVisibilityConverter}}">
+                    <StackPanel>
+                        <Border Style="{StaticResource CardStyle}" Padding="14" Margin="0,0,0,10">
+                            <StackPanel>
+                                <TextBlock Text="本机解锁" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource TextPrimaryBrush}"/>
+                                <TextBlock Text="填写当前 Windows 账号后安装组件，锁屏时由本机直接解锁，不再依赖远程服务。"
+                                           FontSize="11" Foreground="{StaticResource TextDisabledBrush}" TextWrapping="Wrap" Margin="0,6,0,12"/>
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="12"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="用户名" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                        <TextBox Text="{Binding Settings.Username, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource ModernTextBoxStyle}"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="密码" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                        <PasswordBox x:Name="PasswordBox" Style="{StaticResource ModernPasswordBoxStyle}" PasswordChanged="PasswordBox_PasswordChanged"/>
+                                    </StackPanel>
+                                </Grid>
+                                <TextBlock Text="{Binding LocalUnlockStatus}" FontSize="11" Margin="0,0,0,10">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="{StaticResource WarningBrush}"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsLocalUnlockReady}" Value="True">
+                                                    <Setter Property="Foreground" Value="{StaticResource SuccessBrush}"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <CheckBox Content="优先使用本机解锁" Style="{StaticResource ToggleSwitchStyle}"
+                                          IsChecked="{Binding Settings.UseLocalUnlock}" FontSize="12" Margin="0,0,0,10"/>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="8"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="8"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Button Content="启用本机解锁" Style="{StaticResource PrimaryButtonStyle}"
+                                            Command="{Binding InstallLocalUnlockCommand}" Padding="0,10"/>
+                                    <Button Grid.Column="2" Content="卸载" Style="{StaticResource SecondaryButtonStyle}"
+                                            Foreground="{StaticResource ErrorBrush}"
+                                            BorderBrush="{StaticResource ErrorBrush}"
+                                            Command="{Binding UninstallLocalUnlockCommand}"
+                                            IsEnabled="{Binding CanUninstallLocalUnlock}" Padding="0,10"/>
+                                    <Button Grid.Column="4" Content="测试解锁" Style="{StaticResource SecondaryButtonStyle}"
+                                            Command="{Binding TestUnlockCommand}"
+                                            IsEnabled="{Binding CanTestUnlock}" Padding="0,10"/>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource CardStyle}" Padding="14">
+                            <StackPanel>
+                                <TextBlock Text="备用：远程解锁服务" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource TextPrimaryBrush}"/>
+                                <TextBlock Text="本机解锁不可用时，仍可连接 FileManagerService。"
+                                           FontSize="11" Foreground="{StaticResource TextDisabledBrush}" TextWrapping="Wrap" Margin="0,6,0,10"/>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="12"/>
+                                        <ColumnDefinition Width="90"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="地址" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                        <TextBox Text="{Binding Settings.ServerIp, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource ModernTextBoxStyle}"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="端口" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                        <TextBox Text="{Binding Settings.ServerPort, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource ModernTextBoxStyle}"/>
+                                    </StackPanel>
+                                </Grid>
+                                <Button Content="测试远程服务" Style="{StaticResource SecondaryButtonStyle}"
+                                        Command="{Binding TestServerCommand}" Padding="10,8" Margin="0,10,0,0" HorizontalAlignment="Left"/>
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
-                </Border>
-                
-                <!-- 保存按钮 -->
-                <Button Content="💾 保存设置" 
-                        Style="{StaticResource PrimaryButtonStyle}"
-                        Command="{Binding SaveSettingsCommand}"
-                        HorizontalAlignment="Stretch"
-                        Padding="0,10"
-                        Margin="0,0,0,10"/>
-                
-                <!-- 关于链接 -->
-                <TextBlock HorizontalAlignment="Center" FontSize="11">
-                    <Hyperlink Click="Hyperlink_Click" Foreground="{StaticResource PrimaryBrush}">
-                        查看使用说明
-                    </Hyperlink>
-                </TextBlock>
-                
-            </StackPanel>
+                </ScrollViewer>
+
+                <!-- 规则 -->
+                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                              Visibility="{Binding IsTabRules, Converter={StaticResource BoolToVisibilityConverter}}">
+                    <Border Style="{StaticResource CardStyle}" Padding="14">
+                        <StackPanel>
+                            <Grid Margin="0,0,0,12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="信号阈值" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}"/>
+                                    <TextBlock Text="越接近 0 越强" FontSize="10" Foreground="{StaticResource TextDisabledBrush}"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                    <TextBox Text="{Binding Settings.RssiThreshold, UpdateSourceTrigger=PropertyChanged}"
+                                             Style="{StaticResource ModernTextBoxStyle}" Width="56" TextAlignment="Center" Padding="6,4"/>
+                                    <TextBlock Text="dBm" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center" Margin="6,0,0,0"/>
+                                </StackPanel>
+                            </Grid>
+                            <Grid Margin="0,0,0,12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="锁定 / 解锁延迟" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center"/>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                    <TextBox Text="{Binding Settings.LockDelay, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource ModernTextBoxStyle}" Width="44" TextAlignment="Center" Padding="4,4"/>
+                                    <TextBlock Text="秒" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center" Margin="4,0,10,0"/>
+                                    <TextBox Text="{Binding Settings.UnlockDelay, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource ModernTextBoxStyle}" Width="44" TextAlignment="Center" Padding="4,4"/>
+                                    <TextBlock Text="秒" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center" Margin="4,0,0,0"/>
+                                </StackPanel>
+                            </Grid>
+                            <Grid Margin="0,0,0,14">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="滞后 / 丢失超时" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center"/>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                    <TextBox Text="{Binding Settings.HysteresisDb, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource ModernTextBoxStyle}" Width="40" TextAlignment="Center" Padding="4,4"/>
+                                    <TextBlock Text="dB" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center" Margin="4,0,10,0"/>
+                                    <TextBox Text="{Binding Settings.PresenceTimeout, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource ModernTextBoxStyle}" Width="40" TextAlignment="Center" Padding="4,4"/>
+                                    <TextBlock Text="秒" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center" Margin="4,0,0,0"/>
+                                </StackPanel>
+                            </Grid>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="10"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="10"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                <CheckBox Grid.Row="0" Grid.Column="0" Content="自动锁定" Style="{StaticResource ToggleSwitchStyle}" IsChecked="{Binding Settings.AutoLock}" FontSize="12"/>
+                                <CheckBox Grid.Row="0" Grid.Column="1" Content="自动解锁" Style="{StaticResource ToggleSwitchStyle}" IsChecked="{Binding Settings.AutoUnlock}" FontSize="12"/>
+                                <CheckBox Grid.Row="2" Grid.Column="0" Content="不干预手动锁定" Style="{StaticResource ToggleSwitchStyle}" IsChecked="{Binding Settings.ManualLock}" FontSize="12"/>
+                                <CheckBox Grid.Row="2" Grid.Column="1" Content="不干预手动解锁" Style="{StaticResource ToggleSwitchStyle}" IsChecked="{Binding Settings.ManualUnlock}" FontSize="12"/>
+                                <CheckBox Grid.Row="4" Grid.Column="0" Content="开机自启" Style="{StaticResource ToggleSwitchStyle}" IsChecked="{Binding Settings.AutoStart}" FontSize="12"/>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+                </ScrollViewer>
+            </Grid>
         </Grid>
     </Border>
 </Window>

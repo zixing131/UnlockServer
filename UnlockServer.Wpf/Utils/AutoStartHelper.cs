@@ -25,7 +25,12 @@ namespace UnlockServer
                 ITaskDefinition task = scheduler.NewTask(0);
                 task.RegistrationInfo.Author = "zixing";
                 task.RegistrationInfo.Description = "UnlockServer后台自启服务";
-                task.Triggers.Create(_TASK_TRIGGER_TYPE2.TASK_TRIGGER_LOGON);
+
+                task.Principal.RunLevel = _TASK_RUNLEVEL.TASK_RUNLEVEL_HIGHEST;
+                task.Principal.LogonType = _TASK_LOGON_TYPE.TASK_LOGON_INTERACTIVE_TOKEN;
+
+                var logonTrigger = (ILogonTrigger)task.Triggers.Create(_TASK_TRIGGER_TYPE2.TASK_TRIGGER_LOGON);
+                logonTrigger.Delay = "PT15S";
 
                 IExecAction action = (IExecAction)task.Actions.Create(_TASK_ACTION_TYPE.TASK_ACTION_EXEC);
                 action.Path = Process.GetCurrentProcess().MainModule.FileName;
@@ -33,12 +38,16 @@ namespace UnlockServer
 
                 task.Settings.ExecutionTimeLimit = "PT0S";
                 task.Settings.DisallowStartIfOnBatteries = false;
+                task.Settings.StopIfGoingOnBatteries = false;
                 task.Settings.RunOnlyIfIdle = false;
+                task.Settings.AllowDemandStart = true;
+                task.Settings.StartWhenAvailable = true;
+                task.Settings.MultipleInstances = _TASK_INSTANCES_POLICY.TASK_INSTANCES_IGNORE_NEW;
 
-                IRegisteredTask regTask = folder.RegisterTaskDefinition(
+                folder.RegisterTaskDefinition(
                     TaskName,
                     task,
-                    (int)_TASK_CREATION.TASK_CREATE,
+                    (int)_TASK_CREATION.TASK_CREATE_OR_UPDATE,
                     null,
                     null,
                     _TASK_LOGON_TYPE.TASK_LOGON_INTERACTIVE_TOKEN,

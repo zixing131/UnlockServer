@@ -37,7 +37,9 @@ namespace UnlockServer.Views
         public static bool Show(string message, string title = "提示", DialogType type = DialogType.Info, DialogButtons buttons = DialogButtons.Ok, Window owner = null)
         {
             var dialog = new MessageDialog();
-            dialog.Owner = owner ?? Application.Current.MainWindow;
+            dialog.Owner = null;
+            dialog.Topmost = true;
+            dialog.WindowStartupLocation = WindowStartupLocation.CenterScreen;
             dialog.SetContent(message, title, type, buttons);
             dialog.ShowDialog();
             return dialog.Result;

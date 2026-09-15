@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnlockServer.ViewModels;
 
 namespace UnlockServer.Models
@@ -11,16 +12,21 @@ namespace UnlockServer.Models
         private int _serverPort = 2084;
         private string _username = "";
         private string _password = "";
-        private int _rssiThreshold = -90;
+        private int _rssiThreshold = -70;
         private string _deviceAddress = "";
-        private int _bluetoothType = 1; // 1=Classic, 2=BLE
+        private int _bluetoothType = 2; // 1=Classic, 2=BLE
         private bool _autoLock = false;
         private bool _autoUnlock = false;
         private bool _manualLock = true;
         private bool _manualUnlock = false;
         private bool _autoStart = false;
-        private int _lockDelay = 20;      // 锁定延迟（秒）
-        private int _unlockDelay = 10;    // 解锁延迟（秒）
+        private int _lockDelay = 15;
+        private int _unlockDelay = 3;
+        private int _hysteresisDb = 8;
+        private int _presenceTimeout = 8;
+        private bool _requireAllDevices;
+        private bool _useLocalUnlock = true;
+        private List<BoundDevice> _devices = new List<BoundDevice>();
 
         /// <summary>
         /// 服务器IP
@@ -146,6 +152,43 @@ namespace UnlockServer.Models
         {
             get => _unlockDelay;
             set => SetProperty(ref _unlockDelay, value);
+        }
+
+        /// <summary>
+        /// 滞后区间（dB）。进入范围要比离开更近，减少临界抖动。
+        /// </summary>
+        public int HysteresisDb
+        {
+            get => _hysteresisDb;
+            set => SetProperty(ref _hysteresisDb, value);
+        }
+
+        /// <summary>
+        /// 信号丢失超时（秒）。超过该时间未见新广播则视为离开。
+        /// </summary>
+        public int PresenceTimeout
+        {
+            get => _presenceTimeout;
+            set => SetProperty(ref _presenceTimeout, value);
+        }
+
+        /// <summary>true=全部在附近才解锁；false=任一设备即可</summary>
+        public bool RequireAllDevices
+        {
+            get => _requireAllDevices;
+            set => SetProperty(ref _requireAllDevices, value);
+        }
+
+        public bool UseLocalUnlock
+        {
+            get => _useLocalUnlock;
+            set => SetProperty(ref _useLocalUnlock, value);
+        }
+
+        public List<BoundDevice> Devices
+        {
+            get => _devices;
+            set => SetProperty(ref _devices, value ?? new List<BoundDevice>());
         }
     }
 }

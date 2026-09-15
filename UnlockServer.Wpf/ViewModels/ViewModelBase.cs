@@ -1,12 +1,10 @@
-using System;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using System.Runtime.Serialization;
 
 namespace UnlockServer.ViewModels
 {
-    /// <summary>
-    /// ViewModel 基类，实现 INotifyPropertyChanged
-    /// </summary>
+    [DataContract]
     public abstract class ViewModelBase : INotifyPropertyChanged
     {
         public event PropertyChangedEventHandler PropertyChanged;

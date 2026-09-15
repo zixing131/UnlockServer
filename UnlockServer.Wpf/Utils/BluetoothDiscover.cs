@@ -2,13 +2,14 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using Windows.Devices.Bluetooth;
+using Windows.Devices.Bluetooth.Advertisement;
 using Windows.Devices.Enumeration;
-using InTheHand.Net;
+using Windows.Storage.Streams;
 using InTheHand.Net.Bluetooth;
 using InTheHand.Net.Sockets;
 
@@ -23,18 +24,48 @@ namespace UnlockServer
         public string Address { get; set; }
         public short Rssi { get; set; }
         public string Type { get; set; }
-        public DateTime LastSeen { get; set; } = DateTime.Now;
+        public DateTime LastSeen { get; set; } = DateTime.MinValue;
         public bool IsPaired { get; set; }
         public bool IsInRange { get; set; }
+        public bool HasRealRssi { get; set; }
     }
 
     /// <summary>
-    /// 蓝牙设备发现类（增强版）
-    /// 功能：
-    /// 1. 支持经典蓝牙和 BLE 设备发现
-    /// 2. 支持已配对设备的主动探测
-    /// 3. 自动重扫描机制
-    /// 4. 设备缓存管理
+    /// RSSI 指数滑动平均，降低单次抖动。
+    /// </summary>
+    internal sealed class RssiSmoother
+    {
+        private readonly double _alpha;
+        private double? _value;
+
+        public RssiSmoother(double alpha = 0.35)
+        {
+            _alpha = alpha;
+        }
+
+        public short Update(short rssi)
+        {
+            if (_value == null)
+                _value = rssi;
+            else
+                _value = _alpha * rssi + (1 - _alpha) * _value.Value;
+
+            return (short)Math.Round(_value.Value);
+        }
+
+        public short? Value => _value.HasValue ? (short)Math.Round(_value.Value) : (short?)null;
+
+        public void Reset()
+        {
+            _value = null;
+        }
+    }
+
+    /// <summary>
+    /// 近场存在检测：
+    /// BLE 以广播 RSSI 为主（不主动连接，省电、数值真实）；
+    /// 经典蓝牙以 DeviceWatcher 新 RSSI + 低频 Inquiry 为辅，不再用 RFCOMM 当主依据。
+    /// LastSeen 只在收到「新观测」时刷新，避免 Windows 缓存 RSSI 导致关机后仍显示在附近。
     /// </summary>
     public class BluetoothDiscover
     {
@@ -42,7 +73,7 @@ namespace UnlockServer
 
         private static readonly Regex MacRegex = new Regex(@"([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}", RegexOptions.Compiled);
 
-        private static readonly string[] RequestedProperties = new[]
+        private static readonly string[] RequestedProperties =
         {
             "System.Devices.Aep.DeviceAddress",
             "System.Devices.Aep.IsConnected",
@@ -54,22 +85,17 @@ namespace UnlockServer
         private const string SignalStrengthProperty = "System.Devices.Aep.SignalStrength";
         private const string DeviceAddressProperty = "System.Devices.Aep.DeviceAddress";
         private const string IsPairedProperty = "System.Devices.Aep.IsPaired";
+        private const string IsConnectedProperty = "System.Devices.Aep.IsConnected";
 
         public const string BluetoothId = "(System.Devices.Aep.ProtocolId:=\"{e0cbf06c-cd8b-4647-bb8a-263b43f0f974}\")";
         public const string BluetoothLEId = "(System.Devices.Aep.ProtocolId:=\"{bb7bb05e-5972-42b5-94fc-76eaa7084d49}\")";
 
         private const int RssiDeltaThreshold = 2;
-        private const int DeviceTimeoutSeconds = 30;
-        private const int RescanIntervalMs = 15000;
-        
-        // 主动探测的 RSSI 模拟值
-        // 注意：RSSI_IN_RANGE 必须高于用户设置的阈值（默认 -55），否则会被判定为不在范围
-        private const short RSSI_IN_RANGE = -40;      // 设备在范围内（模拟值，表示很近）
-        private const short RSSI_OUT_OF_RANGE = -100; // 设备不在范围内
+        private const short FallbackInRangeRssi = -50;
 
         #endregion
 
-        #region Windows Bluetooth API
+        #region Windows Bluetooth Inquiry
 
         [DllImport("bthprops.cpl", SetLastError = true)]
         private static extern IntPtr BluetoothFindFirstDevice(ref BLUETOOTH_DEVICE_SEARCH_PARAMS pbtsp, ref BLUETOOTH_DEVICE_INFO pbtdi);
@@ -80,24 +106,16 @@ namespace UnlockServer
         [DllImport("bthprops.cpl", SetLastError = true)]
         private static extern bool BluetoothFindDeviceClose(IntPtr hFind);
 
-        [DllImport("bthprops.cpl", SetLastError = true)]
-        private static extern int BluetoothGetDeviceInfo(IntPtr hRadio, ref BLUETOOTH_DEVICE_INFO pbtdi);
-
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         private struct BLUETOOTH_DEVICE_SEARCH_PARAMS
         {
             public int dwSize;
-            [MarshalAs(UnmanagedType.Bool)]
-            public bool fReturnAuthenticated;
-            [MarshalAs(UnmanagedType.Bool)]
-            public bool fReturnRemembered;
-            [MarshalAs(UnmanagedType.Bool)]
-            public bool fReturnUnknown;
-            [MarshalAs(UnmanagedType.Bool)]
-            public bool fReturnConnected;
-            [MarshalAs(UnmanagedType.Bool)]
-            public bool fIssueInquiry;      // 关键：执行真正的蓝牙查询
-            public byte cTimeoutMultiplier; // 查询超时倍数 (1.28秒 * n)
+            [MarshalAs(UnmanagedType.Bool)] public bool fReturnAuthenticated;
+            [MarshalAs(UnmanagedType.Bool)] public bool fReturnRemembered;
+            [MarshalAs(UnmanagedType.Bool)] public bool fReturnUnknown;
+            [MarshalAs(UnmanagedType.Bool)] public bool fReturnConnected;
+            [MarshalAs(UnmanagedType.Bool)] public bool fIssueInquiry;
+            public byte cTimeoutMultiplier;
             public IntPtr hRadio;
         }
 
@@ -107,12 +125,9 @@ namespace UnlockServer
             public int dwSize;
             public ulong Address;
             public uint ulClassofDevice;
-            [MarshalAs(UnmanagedType.Bool)]
-            public bool fConnected;
-            [MarshalAs(UnmanagedType.Bool)]
-            public bool fRemembered;
-            [MarshalAs(UnmanagedType.Bool)]
-            public bool fAuthenticated;
+            [MarshalAs(UnmanagedType.Bool)] public bool fConnected;
+            [MarshalAs(UnmanagedType.Bool)] public bool fRemembered;
+            [MarshalAs(UnmanagedType.Bool)] public bool fAuthenticated;
             public SYSTEMTIME stLastSeen;
             public SYSTEMTIME stLastUsed;
             [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 248)]
@@ -122,132 +137,252 @@ namespace UnlockServer
         [StructLayout(LayoutKind.Sequential)]
         private struct SYSTEMTIME
         {
-            public ushort wYear;
-            public ushort wMonth;
-            public ushort wDayOfWeek;
-            public ushort wDay;
-            public ushort wHour;
-            public ushort wMinute;
-            public ushort wSecond;
-            public ushort wMilliseconds;
+            public ushort wYear, wMonth, wDayOfWeek, wDay;
+            public ushort wHour, wMinute, wSecond, wMilliseconds;
         }
 
         #endregion
 
         #region 字段
 
-        private DeviceWatcher _watcher;
+        private DeviceWatcher _classicWatcher;
+        private DeviceWatcher _leWatcher;
+        private BluetoothLEAdvertisementWatcher _advWatcher;
+        private BluetoothLEAdvertisementPublisher _advPublisher;
         private readonly ConcurrentDictionary<string, MybluetoothDevice> _devices;
+        private readonly ConcurrentDictionary<string, short> _lastWatcherRssi = new ConcurrentDictionary<string, short>(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, RssiSmoother> _smoothers = new ConcurrentDictionary<string, RssiSmoother>(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, byte> _targets = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, BluetoothLEDevice> _heldLeDevices = new ConcurrentDictionary<string, BluetoothLEDevice>(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, byte> _watcherConnected = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
         private readonly int _bleType;
-        private Timer _rescanTimer;
-        private Timer _cleanupTimer;
-        private Timer _connectionCheckTimer;  // 连接状态检测定时器
+        private readonly object _scanModeLock = new object();
+
+        private Timer _inquiryTimer;
+        private Timer _staleTimer;
+        private Timer _advRefreshTimer;
+        private Timer _connectionStatusTimer;
+        private Timer _lockScanTimer;
         private bool _isRunning;
-        private string _targetAddress;
-        
-        // 持久连接相关
-        private BluetoothClient _persistentClient;
-        private bool _isPersistentConnected;
-        private DateTime _lastConnectionCheck = DateTime.MinValue;
-        private int _connectionFailCount = 0;
-        private int _connectionSuccessCount = 0;
-        private const int FailCountToDisconnect = 2;  // 连续2次失败就判定离开（更灵敏）
-        private const int SuccessCountToConnect = 1;   // 1次成功就判定在范围
-        
-        // 状态稳定性
-        private bool _lastReportedStatus = true;  // 初始假设在范围内，这样第一次失败检测会触发更新
-        private bool _hasInitialStatus = false;   // 是否已经有初始状态
-        private DateTime _statusChangeTime = DateTime.MinValue;
+        private int _presenceTimeoutSeconds = 8;
+        private bool _usingActiveScan;
+        private bool _sessionLocked;
+        private int _intentionalStop;
+        private DateTime _startedAt = DateTime.MinValue;
+        private DateTime _lastAnyObservation = DateTime.MinValue;
+        private DateTime _lastAdvertisement = DateTime.MinValue;
+        private DateTime _lastWatcherRestart = DateTime.MinValue;
+        private DateTime _holdStaleUntil = DateTime.MinValue;
 
         #endregion
 
         #region 事件
 
-        /// <summary>
-        /// 设备 RSSI 更新事件
-        /// 参数：地址, RSSI值, 是否为真实值
-        /// </summary>
+        /// <summary>地址, RSSI, 是否为真实广播/更新值</summary>
         public event Action<string, short, bool> OnRssiUpdated;
 
-        /// <summary>
-        /// 设备状态变化事件（在范围/不在范围）
-        /// </summary>
         public event Action<string, bool> OnDeviceStatusChanged;
 
         #endregion
 
-        #region 构造函数
-
-        public BluetoothDiscover(int bletype = 1)
+        public BluetoothDiscover(int bletype = 0)
         {
-            _bleType = bletype == 2 ? 2 : 1;
+            _bleType = (bletype == 1 || bletype == 2) ? bletype : 0;
             _devices = new ConcurrentDictionary<string, MybluetoothDevice>(StringComparer.OrdinalIgnoreCase);
-
-            var protocolId = _bleType == 1 ? BluetoothId : BluetoothLEId;
-            _watcher = DeviceInformation.CreateWatcher(
-                protocolId, RequestedProperties, DeviceInformationKind.AssociationEndpoint);
         }
 
-        #endregion
+        /// <summary>未见新广播后多少秒视为离开</summary>
+        public int PresenceTimeoutSeconds
+        {
+            get => _presenceTimeoutSeconds;
+            set => _presenceTimeoutSeconds = value < 3 ? 3 : (value > 60 ? 60 : value);
+        }
 
-        #region 公共方法
-
-        /// <summary>
-        /// 设置目标设备地址（用于主动探测）
-        /// </summary>
         public void SetTargetAddress(string address)
         {
-            _targetAddress = NormalizeAddress(address);
-            // 重置状态
-            _hasInitialStatus = false;
-            _connectionFailCount = 0;
-            _connectionSuccessCount = 0;
-            LogHelper.WriteLine($"设置目标设备地址: {_targetAddress}");
+            SetTargetAddresses(new[] { address });
+        }
+
+        public void SetTargetAddresses(IEnumerable<string> addresses)
+        {
+            var next = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (addresses != null)
+            {
+                foreach (var raw in addresses)
+                {
+                    var n = NormalizeAddress(raw);
+                    if (!string.IsNullOrEmpty(n))
+                        next.Add(n);
+                }
+            }
+
+            var same = next.SetEquals(_targets.Keys);
+            _targets.Clear();
+            foreach (var n in next)
+                _targets[n] = 1;
+
+            if (!same)
+            {
+                foreach (var key in _smoothers.Keys)
+                {
+                    if (!next.Contains(key))
+                        _smoothers.TryRemove(key, out _);
+                }
+            }
+
+            EnsureTargetPlaceholder();
+            if (!same)
+                LogHelper.WriteLine($"设置目标设备: {string.Join(", ", _targets.Keys)}");
+        }
+
+        private bool IsTarget(string address)
+        {
+            return !string.IsNullOrEmpty(address) && _targets.ContainsKey(address);
+        }
+
+        /// <summary>广播监听是否还在出数。为 false 时是扫描停了，不是设备离开。</summary>
+        public bool IsAdvertisementAlive
+        {
+            get
+            {
+                if (_lastAdvertisement == DateTime.MinValue)
+                    return _startedAt != DateTime.MinValue &&
+                           (DateTime.Now - _startedAt).TotalSeconds < 20;
+                return (DateTime.Now - _lastAdvertisement).TotalSeconds <= 15;
+            }
+        }
+
+        /// <summary>最近是否还能听到任意蓝牙广播。锁屏后监听常会中断，此时不应把目标判为离开。</summary>
+        public bool IsScanHealthy => IsAdvertisementAlive || HasConnectedTarget();
+
+        public bool IsRefreshing => DateTime.Now < _holdStaleUntil;
+
+        public bool IsTargetConnected(string address)
+        {
+            var n = NormalizeAddress(address);
+            if (string.IsNullOrEmpty(n)) return false;
+            if (IsHeldConnected(n)) return true;
+            return _watcherConnected.TryGetValue(n, out var flag) && flag != 0;
+        }
+
+        /// <summary>扫描像是整表停了，而不是某台设备离开。</summary>
+        public bool LooksLikeScanStall(DateTime targetLastSeen)
+        {
+            if (_sessionLocked || IsRefreshing)
+                return true;
+            if (!IsAdvertisementAlive && !HasConnectedTarget())
+                return true;
+            return false;
+        }
+
+        public int ScanSilenceSeconds
+        {
+            get
+            {
+                var from = _lastAnyObservation != DateTime.MinValue ? _lastAnyObservation : _startedAt;
+                if (from == DateTime.MinValue) return int.MaxValue;
+                return (int)(DateTime.Now - from).TotalSeconds;
+            }
+        }
+
+        public void NotifySessionLocked()
+        {
+            _sessionLocked = true;
+            LogHelper.WriteLine("会话已锁定，继续当前扫描，不重置设备状态");
+            RestartInquiryTimer(5000);
+            var watcherDead = _advWatcher == null ||
+                (_advWatcher.Status != BluetoothLEAdvertisementWatcherStatus.Started &&
+                 _advWatcher.Status != BluetoothLEAdvertisementWatcherStatus.Created);
+            if (watcherDead)
+                ScheduleRestart("session lock recovered");
+            else if (!_usingActiveScan)
+            {
+                lock (_scanModeLock)
+                    StartAdvertisementWatcher(active: true);
+            }
+            DisposeTimer(ref _lockScanTimer);
+            _lockScanTimer = new Timer(LockScanKeepAlive, null, 4000, 8000);
+        }
+
+        public void NotifySessionUnlocked()
+        {
+            _sessionLocked = false;
+            DisposeTimer(ref _lockScanTimer);
+            RestartInquiryTimer(12000);
+            ScheduleRestart("session unlock revive");
+        }
+
+        private void LockScanKeepAlive(object state)
+        {
+            if (!_isRunning || !_sessionLocked) return;
+
+            var watcherDead = _advWatcher == null ||
+                _advWatcher.Status != BluetoothLEAdvertisementWatcherStatus.Started;
+            if (watcherDead || !IsAdvertisementAlive)
+            {
+                RefreshAdvertisementWatcher("lock keepalive");
+                return;
+            }
+
+            if (!_usingActiveScan)
+            {
+                lock (_scanModeLock)
+                    StartAdvertisementWatcher(active: true);
+            }
+        }
+
+        private void RestartInquiryTimer(int periodMs)
+        {
+            DisposeTimer(ref _inquiryTimer);
+            if (_isRunning)
+                _inquiryTimer = new Timer(InquiryCallback, null, 1000, periodMs);
         }
 
         public void StartDiscover()
         {
             if (_isRunning) return;
             _isRunning = true;
+            _startedAt = DateTime.Now;
+            _lastAnyObservation = DateTime.MinValue;
+            _lastAdvertisement = DateTime.MinValue;
+            _holdStaleUntil = DateTime.MinValue;
 
-            // 先加载已配对设备
             LoadPairedDevices();
+            EnsureTargetPlaceholder();
+            StartWatchers();
 
-            // 启动 DeviceWatcher
-            StartWatcher();
+            if (_bleType != 1)
+            {
+                StartAdvertisementWatcher(active: true);
+                StartScanKeepAlivePublisher();
+            }
 
-            // 启动定时重扫描（每15秒重启一次 watcher）
-            _rescanTimer = new Timer(RescanCallback, null, RescanIntervalMs, RescanIntervalMs);
+            _inquiryTimer = new Timer(InquiryCallback, null, 2000, 4000);
+            _staleTimer = new Timer(StaleCallback, null, 2000, 2000);
+            _advRefreshTimer = new Timer(AdvRefreshCallback, null, 20000, 20000);
+            _connectionStatusTimer = new Timer(ConnectionStatusCallback, null, 2000, 3000);
 
-            // 启动设备清理定时器（每10秒清理超时设备）
-            _cleanupTimer = new Timer(CleanupCallback, null, 10000, 10000);
-
-            // 只使用一个连接状态检测定时器（每3秒检测一次，更灵敏）
-            // 移除 _probeTimer，避免多个定时器同时探测导致冲突
-            _connectionCheckTimer = new Timer(CheckPersistentConnection, null, 3000, 3000);
-
-            LogHelper.WriteLine($"{(_bleType == 1 ? "经典蓝牙" : "BLE")}扫描已启动");
+            LogHelper.WriteLine($"存在检测已启动（模式 {(_bleType == 0 ? "全部" : _bleType == 1 ? "经典" : "BLE")}）");
         }
 
         public void StopDiscover()
         {
             _isRunning = false;
 
-            _rescanTimer?.Dispose();
-            _rescanTimer = null;
+            DisposeTimer(ref _inquiryTimer);
+            DisposeTimer(ref _staleTimer);
+            DisposeTimer(ref _advRefreshTimer);
+            DisposeTimer(ref _connectionStatusTimer);
+            DisposeTimer(ref _lockScanTimer);
 
-            _cleanupTimer?.Dispose();
-            _cleanupTimer = null;
-
-            _connectionCheckTimer?.Dispose();
-            _connectionCheckTimer = null;
-            
-            // 关闭持久连接
-            ClosePersistentConnection();
-
-            StopWatcher();
-
+            StopScanKeepAlivePublisher();
+            StopAdvertisementWatcher();
+            StopWatchers();
+            ReleaseHeldLeDevices();
+            _watcherConnected.Clear();
             _devices.Clear();
+            _lastWatcherRssi.Clear();
+            _smoothers.Clear();
             LogHelper.WriteLine("蓝牙扫描已停止");
         }
 
@@ -259,658 +394,487 @@ namespace UnlockServer
                 .ToList();
         }
 
-        /// <summary>
-        /// 获取指定地址设备的 RSSI
-        /// </summary>
         public short? GetDeviceRssi(string address)
         {
             var normalizedAddress = NormalizeAddress(address);
             if (string.IsNullOrEmpty(normalizedAddress)) return null;
 
-            if (_devices.TryGetValue(normalizedAddress, out var device))
-            {
-                if ((DateTime.Now - device.LastSeen).TotalSeconds < DeviceTimeoutSeconds)
-                {
-                    return device.Rssi;
-                }
-            }
+            if (_devices.TryGetValue(normalizedAddress, out var device) && IsFresh(device))
+                return device.Rssi;
 
             return null;
         }
 
-        #endregion
+        #region 已配对 / 占位
 
-        #region 已配对设备处理
+        private void EnsureTargetPlaceholder()
+        {
+            foreach (var address in _targets.Keys)
+            {
+                _devices.AddOrUpdate(address,
+                    new MybluetoothDevice
+                    {
+                        Name = "",
+                        Address = address,
+                        Rssi = -100,
+                        Type = "BLE",
+                        IsPaired = true,
+                        IsInRange = false,
+                        LastSeen = DateTime.MinValue
+                    },
+                    (_, existing) => existing);
+            }
+        }
 
         private void LoadPairedDevices()
         {
-            if (_bleType != 1) return; // 只对经典蓝牙处理
+            Task.Run(() =>
+            {
+                try
+                {
+                    if (_bleType != 2)
+                        LoadClassicPaired();
+                    if (_bleType != 1)
+                        LoadBlePaired();
+                }
+                catch (Exception ex)
+                {
+                    LogHelper.WriteLine($"加载已配对设备失败: {ex.Message}");
+                }
+            });
+        }
 
+        private void LoadClassicPaired()
+        {
             try
             {
-                // 获取本地蓝牙适配器的已配对设备
                 var radio = BluetoothRadio.Default;
                 if (radio == null) return;
 
-                var client = new BluetoothClient();
-                // 获取已记住（配对）的设备
-                var devices = client.PairedDevices;
-
-                foreach (var device in devices)
+                using (var client = new BluetoothClient())
                 {
-                    try
+                    foreach (var device in client.PairedDevices)
                     {
                         var address = FormatMacAddress(device.DeviceAddress.ToString());
                         if (string.IsNullOrEmpty(address)) continue;
 
-                        var btDevice = new MybluetoothDevice
-                        {
-                            Name = device.DeviceName ?? "",
-                            Address = address,
-                            Rssi = RSSI_OUT_OF_RANGE,
-                            Type = "Classic",
-                            IsPaired = true,
-                            IsInRange = false,
-                            LastSeen = DateTime.Now
-                        };
-
-                        _devices.AddOrUpdate(address, btDevice, (_, existing) =>
-                        {
-                            existing.IsPaired = true;
-                            if (string.IsNullOrEmpty(existing.Name))
-                                existing.Name = btDevice.Name;
-                            return existing;
-                        });
-
-                        LogHelper.WriteLine($"发现已配对设备: {btDevice.Name}[{address}]");
+                        UpsertPaired(address, device.DeviceName, "Classic");
                     }
-                    catch { }
                 }
-
-                client.Close();
             }
             catch (Exception ex)
             {
-                LogHelper.WriteLine($"加载已配对设备失败: {ex.Message}");
+                LogHelper.WriteLine($"加载经典已配对设备失败: {ex.Message}");
             }
         }
 
-        /// <summary>
-        /// 主动探测目标设备是否在范围内
-        /// </summary>
-        private void ProbeTargetDevice(object state)
-        {
-            if (!_isRunning || string.IsNullOrEmpty(_targetAddress)) return;
-            if (_bleType != 1) return; // 只对经典蓝牙有效
-
-            Task.Run(() =>
-            {
-                try
-                {
-                    var isInRange = ProbeDeviceByAddress(_targetAddress);
-                    
-                    // 更新设备状态
-                    if (_devices.TryGetValue(_targetAddress, out var device))
-                    {
-                        var previousState = device.IsInRange;
-                        device.IsInRange = isInRange;
-                        device.LastSeen = DateTime.Now;
-
-                        if (isInRange)
-                        {
-                            // 如果 DeviceWatcher 没有提供真实 RSSI，使用模拟值
-                            if (device.Rssi <= RSSI_OUT_OF_RANGE)
-                            {
-                                device.Rssi = RSSI_IN_RANGE;
-                            }
-                        }
-                        else
-                        {
-                            device.Rssi = RSSI_OUT_OF_RANGE;
-                        }
-
-                        // 通知 RSSI 更新（模拟值，非真实RSSI）
-                        OnRssiUpdated?.Invoke(_targetAddress, device.Rssi, false);
-
-                        // 状态变化时通知
-                        if (previousState != isInRange)
-                        {
-                            OnDeviceStatusChanged?.Invoke(_targetAddress, isInRange);
-                            LogHelper.WriteLine($"设备 {_targetAddress} 状态变化: {(isInRange ? "在范围内" : "不在范围内")}");
-                        }
-                    }
-                    else
-                    {
-                        // 设备不在列表中，尝试添加
-                        if (isInRange)
-                        {
-                            var newDevice = new MybluetoothDevice
-                            {
-                                Name = "",
-                                Address = _targetAddress,
-                                Rssi = RSSI_IN_RANGE,
-                                Type = "Classic",
-                                IsPaired = true,
-                                IsInRange = true,
-                                LastSeen = DateTime.Now
-                            };
-                            _devices.TryAdd(_targetAddress, newDevice);
-                            OnRssiUpdated?.Invoke(_targetAddress, RSSI_IN_RANGE, false);
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    LogHelper.WriteLine($"探测设备失败: {ex.Message}");
-                }
-            });
-        }
-
-        /// <summary>
-        /// 通过蓝牙地址探测设备是否在范围内
-        /// 不使用系统缓存，只通过实际连接测试
-        /// </summary>
-        private bool ProbeDeviceByAddress(string address)
+        private void LoadBlePaired()
         {
             try
             {
-                var btAddress = ParseBluetoothAddress(address);
-                if (btAddress == 0) return false;
-
-                var deviceAddress = new BluetoothAddress(btAddress);
-                
-                // 直接进行连接测试（不使用 Refresh/Remembered，那些会用缓存）
-                return TryConnect(deviceAddress);
+                var selector = BluetoothLEDevice.GetDeviceSelectorFromPairingState(true);
+                var found = DeviceInformation.FindAllAsync(selector).AsTask().GetAwaiter().GetResult();
+                foreach (var info in found)
+                {
+                    var address = GetAddressFromAddEvent(info.Properties, info.Id);
+                    if (string.IsNullOrEmpty(address)) continue;
+                    UpsertPaired(address, info.Name, "BLE");
+                }
             }
             catch (Exception ex)
             {
-                LogHelper.WriteLine($"探测设备 {address} 失败: {ex.Message}");
-                return false;
+                LogHelper.WriteLine($"加载 BLE 已配对设备失败: {ex.Message}");
             }
         }
 
-        /// <summary>
-        /// 尝试通过蓝牙连接检测设备
-        /// </summary>
-        private bool TryConnect(BluetoothAddress address)
+        private void UpsertPaired(string address, string name, string type)
         {
-            BluetoothClient client = null;
-            bool result = false;
-            
-            try
-            {
-                client = new BluetoothClient();
-                var endpoint = new BluetoothEndPoint(address, BluetoothService.SerialPort);
-                
-                var ar = client.BeginConnect(endpoint, null, null);
-                bool completed = ar.AsyncWaitHandle.WaitOne(3000); // 3秒超时
-                
-                if (completed)
+            _devices.AddOrUpdate(address,
+                new MybluetoothDevice
                 {
-                    try
-                    {
-                        client.EndConnect(ar);
-                        result = true;
-                        LogHelper.WriteLine($"探测: {_targetAddress} 连接成功（在范围内）");
-                    }
-                    catch (SocketException ex)
-                    {
-                        // 只有 10061（连接被拒绝）才表示设备在范围内
-                        // 其他错误（如 10060 超时、10065 不可达）都表示不在范围
-                        if (ex.ErrorCode == 10061)
-                        {
-                            result = true;
-                            LogHelper.WriteLine($"探测: {_targetAddress} 拒绝连接（在范围内）");
-                        }
-                        else
-                        {
-                            result = false;
-                            LogHelper.WriteLine($"探测: {_targetAddress} 错误码 {ex.ErrorCode}（不在范围）");
-                        }
-                    }
-                    catch
-                    {
-                        result = false;
-                    }
-                }
-                else
+                    Name = name ?? "",
+                    Address = address,
+                    Rssi = -100,
+                    Type = type,
+                    IsPaired = true,
+                    IsInRange = false,
+                    LastSeen = DateTime.MinValue
+                },
+                (_, existing) =>
                 {
-                    // 超时 = 设备不在范围内
-                    result = false;
-                    LogHelper.WriteLine($"探测: {_targetAddress} 超时（不在范围）");
-                }
-            }
-            catch (SocketException ex)
-            {
-                // 只有 10061 才表示在范围内
-                result = (ex.ErrorCode == 10061);
-            }
-            catch
-            {
-                result = false;
-            }
-            finally
-            {
-                try { client?.Close(); client?.Dispose(); } catch { }
-            }
-            
-            return result;
-        }
+                    existing.IsPaired = true;
+                    if (!string.IsNullOrEmpty(name) && string.IsNullOrEmpty(existing.Name))
+                        existing.Name = name;
+                    return existing;
+                });
 
-        /// <summary>
-        /// 解析蓝牙地址为 ulong
-        /// </summary>
-        private static ulong ParseBluetoothAddress(string address)
-        {
-            try
-            {
-                // 移除所有分隔符
-                var hex = Regex.Replace(address ?? "", "[^0-9A-Fa-f]", "");
-                if (hex.Length != 12) return 0;
-
-                return Convert.ToUInt64(hex, 16);
-            }
-            catch
-            {
-                return 0;
-            }
+            LogHelper.WriteLine($"已配对设备: {name}[{address}]");
         }
 
         #endregion
 
-        #region 持久连接检测（类似微软动态锁定）
+        #region 广播扫描（BLE）
 
-        /// <summary>
-        /// 检测持久连接状态
-        /// </summary>
-        private void CheckPersistentConnection(object state)
+        private void StartAdvertisementWatcher(bool active)
         {
-            if (!_isRunning || string.IsNullOrEmpty(_targetAddress)) return;
-            if (_bleType != 1) return; // 只对经典蓝牙有效
-
-            Task.Run(() =>
+            try
             {
-                try
+                StopAdvertisementWatcher();
+
+                _advWatcher = new BluetoothLEAdvertisementWatcher
                 {
-                    LogHelper.WriteLine($"开始检测设备 {_targetAddress}...");
-                    
-                    // 使用 Bluetooth Inquiry 检测设备是否在范围内
-                    // 注意：不依赖 DeviceWatcher 的 RSSI，因为那可能是 Windows 缓存的旧值
-                    var isConnected = CheckOrEstablishConnection();
-                    LogHelper.WriteLine($"连接检测结果: {(isConnected ? "成功" : "失败")}");
-                    
-                    if (isConnected)
-                    {
-                        _connectionSuccessCount++;
-                        _connectionFailCount = 0;
-                        
-                        // 首次或状态变化时更新
-                        if (!_hasInitialStatus || !_lastReportedStatus)
-                        {
-                            _hasInitialStatus = true;
-                            _isPersistentConnected = true;
-                            _lastReportedStatus = true;
-                            LogHelper.WriteLine($"状态更新: 在范围内");
-                            UpdateDeviceStatus(_targetAddress, true, RSSI_IN_RANGE);
-                        }
-                    }
-                    else
-                    {
-                        _connectionFailCount++;
-                        _connectionSuccessCount = 0;
-                        
-                        LogHelper.WriteLine($"失败计数: {_connectionFailCount}/{FailCountToDisconnect}");
-                        
-                        // 连续失败多次才判定为离开
-                        if (_connectionFailCount >= FailCountToDisconnect)
-                        {
-                            // 首次或状态变化时更新
-                            if (!_hasInitialStatus || _lastReportedStatus)
-                            {
-                                _hasInitialStatus = true;
-                                _isPersistentConnected = false;
-                                _lastReportedStatus = false;
-                                LogHelper.WriteLine($"状态更新: 不在范围内");
-                                UpdateDeviceStatus(_targetAddress, false, RSSI_OUT_OF_RANGE);
-                            }
-                        }
-                    }
+                    ScanningMode = active ? BluetoothLEScanningMode.Active : BluetoothLEScanningMode.Passive
+                };
+                _advWatcher.Received += AdvWatcher_Received;
+                _advWatcher.Stopped += AdvWatcher_Stopped;
+                _advWatcher.Start();
+                _usingActiveScan = active;
+                LogHelper.WriteLine($"BLE 广播扫描: {(active ? "Active" : "Passive")}");
+            }
+            catch (Exception ex)
+            {
+                LogHelper.WriteLine($"启动 BLE 广播扫描失败: {ex.Message}");
+            }
+        }
+
+        private void StopAdvertisementWatcher()
+        {
+            if (_advWatcher == null) return;
+            Interlocked.Increment(ref _intentionalStop);
+            try
+            {
+                _advWatcher.Received -= AdvWatcher_Received;
+                _advWatcher.Stopped -= AdvWatcher_Stopped;
+                if (_advWatcher.Status == BluetoothLEAdvertisementWatcherStatus.Started ||
+                    _advWatcher.Status == BluetoothLEAdvertisementWatcherStatus.Stopping)
+                {
+                    _advWatcher.Stop();
                 }
-                catch (Exception ex)
+            }
+            catch { }
+            finally
+            {
+                _advWatcher = null;
+                Interlocked.Decrement(ref _intentionalStop);
+            }
+        }
+
+        private void AdvWatcher_Stopped(BluetoothLEAdvertisementWatcher sender, BluetoothLEAdvertisementWatcherStoppedEventArgs args)
+        {
+            if (!_isRunning || _intentionalStop > 0) return;
+            LogHelper.WriteLine($"BLE 广播扫描异常停止: {args.Error}");
+            ScheduleRestart("adv watcher stopped");
+        }
+
+        private void AdvWatcher_Received(BluetoothLEAdvertisementWatcher sender, BluetoothLEAdvertisementReceivedEventArgs args)
+        {
+            if (!_isRunning) return;
+
+            _lastAdvertisement = DateTime.Now;
+
+            var address = FormatFromUlong(args.BluetoothAddress);
+            if (string.IsNullOrEmpty(address)) return;
+
+            var rssi = args.RawSignalStrengthInDBm;
+            var name = args.Advertisement?.LocalName;
+
+            ApplyObservation(address, rssi, true, name, "BLE");
+        }
+
+        private void AdvRefreshCallback(object state)
+        {
+            if (!_isRunning || _bleType == 1) return;
+            if (HasConnectedTarget()) return;
+            if (IsAdvertisementAlive) return;
+            RefreshAdvertisementWatcher("ads silent");
+        }
+
+        private void StartScanKeepAlivePublisher()
+        {
+            try
+            {
+                StopScanKeepAlivePublisher();
+                var writer = new DataWriter();
+                writer.WriteBytes(new byte[] { 0x55, 0x53 });
+                _advPublisher = new BluetoothLEAdvertisementPublisher();
+                _advPublisher.Advertisement.ManufacturerData.Add(
+                    new BluetoothLEManufacturerData(0xFFFF, writer.DetachBuffer()));
+                _advPublisher.Start();
+                LogHelper.WriteLine("已启动扫描保活广播");
+            }
+            catch (Exception ex)
+            {
+                LogHelper.WriteLine($"扫描保活广播不可用: {ex.Message}");
+                _advPublisher = null;
+            }
+        }
+
+        private void StopScanKeepAlivePublisher()
+        {
+            if (_advPublisher == null) return;
+            try
+            {
+                if (_advPublisher.Status == BluetoothLEAdvertisementPublisherStatus.Started ||
+                    _advPublisher.Status == BluetoothLEAdvertisementPublisherStatus.Waiting)
                 {
-                    LogHelper.WriteLine($"连接状态检测异常: {ex.Message}");
+                    _advPublisher.Stop();
+                }
+            }
+            catch { }
+            finally
+            {
+                _advPublisher = null;
+            }
+        }
+
+        private void HoldTargetLeDevices()
+        {
+            if (_bleType == 1) return;
+            Task.Run(async () =>
+            {
+                await Task.Delay(2500).ConfigureAwait(false);
+                if (!_isRunning) return;
+                foreach (var address in _targets.Keys)
+                {
+                    if (!_isRunning) return;
+                    if (_heldLeDevices.ContainsKey(address)) continue;
+                    try
+                    {
+                        var ul = ParseBluetoothAddress(address);
+                        if (ul == 0) continue;
+                        var dev = await BluetoothLEDevice.FromBluetoothAddressAsync(ul);
+                        if (dev == null || !_isRunning)
+                        {
+                            dev?.Dispose();
+                            continue;
+                        }
+                        if (!_heldLeDevices.TryAdd(address, dev))
+                        {
+                            dev.Dispose();
+                            continue;
+                        }
+                        dev.ConnectionStatusChanged += OnHeldConnectionStatusChanged;
+                        LogHelper.WriteLine($"已保持 BLE 引用: {dev.Name}[{address}] {dev.ConnectionStatus}");
+                        if (dev.ConnectionStatus == BluetoothConnectionStatus.Connected)
+                            ApplyConnectedPresence(address, dev.Name, "BLE");
+                    }
+                    catch (Exception ex)
+                    {
+                        LogHelper.WriteLine($"保持 BLE 引用失败 {address}: {ex.Message}");
+                    }
                 }
             });
         }
 
-        /// <summary>
-        /// 检查或建立蓝牙连接
-        /// </summary>
-        private bool CheckOrEstablishConnection()
+        private void ReleaseHeldLeDevices()
         {
-            try
+            foreach (var kv in _heldLeDevices)
             {
-                var btAddress = ParseBluetoothAddress(_targetAddress);
-                if (btAddress == 0) return false;
-
-                var deviceAddress = new BluetoothAddress(btAddress);
-
-                // 直接尝试连接测试（不依赖系统缓存）
-                return QuickConnectionTest(deviceAddress);
-            }
-            catch (Exception ex)
-            {
-                LogHelper.WriteLine($"连接检测异常: {ex.Message}");
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// 检测设备是否在范围内
-        /// 只使用 RFCOMM 连接测试（不使用 Inquiry，因为 Inquiry 会返回已配对设备的缓存信息）
-        /// </summary>
-        private bool QuickConnectionTest(BluetoothAddress address)
-        {
-            BluetoothClient testClient = null;
-            IAsyncResult ar = null;
-            
-            try
-            {
-                // 先检查本机蓝牙是否开启
-                var radio = BluetoothRadio.Default;
-                if (radio == null || radio.Mode == RadioMode.PowerOff)
-                {
-                    LogHelper.WriteLine($"检测: 本机蓝牙已关闭");
-                    return false;
-                }
-                
-                LogHelper.WriteLine($"检测: 连接测试 {_targetAddress}...");
-                
-                testClient = new BluetoothClient();
-                var endpoint = new BluetoothEndPoint(address, BluetoothService.SerialPort);
-                
-                ar = testClient.BeginConnect(endpoint, null, null);
-                // 等待 2 秒
-                bool completed = ar.AsyncWaitHandle.WaitOne(2000);
-                
-                if (completed)
-                {
-                    try
-                    {
-                        testClient.EndConnect(ar);
-                        // 连接成功 = 设备在范围内
-                        LogHelper.WriteLine($"  → 连接成功 ✓");
-                        return true;
-                    }
-                    catch (SocketException ex)
-                    {
-                        LogHelper.WriteLine($"  → 错误码: {ex.ErrorCode}");
-                        // 10061: 连接被拒绝 - 设备响应了（在范围内）
-                        // 10048: 地址已在使用 - 上次连接未完全关闭，忽略此次
-                        if (ex.ErrorCode == 10061)
-                        {
-                            LogHelper.WriteLine($"  → 连接被拒绝(设备响应) ✓");
-                            return true;
-                        }
-                        if (ex.ErrorCode == 10048)
-                        {
-                            // 端口被占用，等待后重试
-                            LogHelper.WriteLine($"  → 端口占用，跳过此次检测");
-                            return false; // 不算作失败，保持之前状态
-                        }
-                        LogHelper.WriteLine($"  → 设备不在范围 ✗");
-                        return false;
-                    }
-                }
-                else
-                {
-                    // 超时 = 设备不在范围
-                    LogHelper.WriteLine($"  → 连接超时 ✗");
-                    return false;
-                }
-            }
-            catch (SocketException ex)
-            {
-                if (ex.ErrorCode == 10048)
-                {
-                    LogHelper.WriteLine($"  → 端口占用，跳过此次检测");
-                    return false;
-                }
-                LogHelper.WriteLine($"  → 连接异常: {ex.ErrorCode} - {ex.Message}");
-                return false;
-            }
-            catch (Exception ex)
-            {
-                LogHelper.WriteLine($"检测失败: {ex.Message}");
-                return false;
-            }
-            finally
-            {
-                // 确保正确关闭连接
                 try
                 {
-                    if (testClient != null)
-                    {
-                        if (testClient.Connected)
-                        {
-                            testClient.GetStream()?.Close();
-                        }
-                        testClient.Close();
-                        testClient.Dispose();
-                    }
+                    kv.Value.ConnectionStatusChanged -= OnHeldConnectionStatusChanged;
+                    kv.Value.Dispose();
                 }
                 catch { }
-                
-                // 释放异步句柄
-                try { ar?.AsyncWaitHandle?.Close(); } catch { }
             }
+            _heldLeDevices.Clear();
         }
 
-        /// <summary>
-        /// 更新设备状态
-        /// </summary>
-        private void UpdateDeviceStatus(string address, bool isInRange, short rssi)
+        private void OnHeldConnectionStatusChanged(BluetoothLEDevice sender, object args)
         {
-            if (_devices.TryGetValue(address, out var device))
-            {
-                var previousState = device.IsInRange;
-                device.IsInRange = isInRange;
-                device.LastSeen = DateTime.Now;
-                
-                // 当设备不在范围时，强制更新 RSSI 为模拟值
-                // 当设备在范围时，只有没有真实 RSSI 时才使用模拟值
-                if (!isInRange)
-                {
-                    // 设备不在范围，强制使用模拟值
-                    device.Rssi = rssi;
-                }
-                else if (device.Rssi == RSSI_OUT_OF_RANGE || device.Rssi == RSSI_IN_RANGE)
-                {
-                    // 设备在范围，但没有真实 RSSI，使用模拟值
-                    device.Rssi = rssi;
-                }
-                
-                // 模拟值，非真实RSSI
-                OnRssiUpdated?.Invoke(address, device.Rssi, false);
-                
-                if (previousState != isInRange)
-                {
-                    OnDeviceStatusChanged?.Invoke(address, isInRange);
-                }
-            }
-            else if (isInRange)
-            {
-                // 设备不在列表但检测到在范围内
-                var newDevice = new MybluetoothDevice
-                {
-                    Name = "",
-                    Address = address,
-                    Rssi = rssi,
-                    Type = "Classic",
-                    IsPaired = true,
-                    IsInRange = true,
-                    LastSeen = DateTime.Now
-                };
-                _devices.TryAdd(address, newDevice);
-                OnRssiUpdated?.Invoke(address, rssi, false);
-                OnDeviceStatusChanged?.Invoke(address, true);
-            }
+            if (!_isRunning || sender == null) return;
+            var address = FormatFromUlong(sender.BluetoothAddress);
+            if (sender.ConnectionStatus == BluetoothConnectionStatus.Connected)
+                ApplyConnectedPresence(address, sender.Name, "BLE");
         }
 
-        /// <summary>
-        /// 关闭持久连接
-        /// </summary>
-        private void ClosePersistentConnection()
+        private bool HasConnectedTarget()
         {
+            foreach (var address in _targets.Keys)
+            {
+                if (IsTargetConnected(address))
+                    return true;
+            }
+            return false;
+        }
+
+        private bool IsHeldConnected(string address)
+        {
+            if (string.IsNullOrEmpty(address)) return false;
+            if (!_heldLeDevices.TryGetValue(address, out var dev) || dev == null)
+                return false;
             try
             {
-                _persistentClient?.Close();
+                return dev.ConnectionStatus == BluetoothConnectionStatus.Connected;
             }
-            catch { }
-            finally
+            catch
             {
-                _persistentClient = null;
-                _isPersistentConnected = false;
+                return false;
+            }
+        }
+
+        private void ConnectionStatusCallback(object state)
+        {
+            if (!_isRunning) return;
+            foreach (var address in _targets.Keys)
+            {
+                if (IsTargetConnected(address))
+                    ApplyConnectedPresence(address, null, "BLE");
+            }
+        }
+
+        private void SetWatcherConnected(string address, bool connected)
+        {
+            if (string.IsNullOrEmpty(address)) return;
+            if (connected)
+                _watcherConnected[address] = 1;
+            else
+                _watcherConnected.TryRemove(address, out _);
+        }
+
+        private void RefreshAdvertisementWatcher(string reason)
+        {
+            if (!_isRunning || _bleType == 1) return;
+            lock (_scanModeLock)
+            {
+                if ((DateTime.Now - _lastWatcherRestart).TotalSeconds < 8)
+                    return;
+                _lastWatcherRestart = DateTime.Now;
+                _holdStaleUntil = DateTime.Now.AddSeconds(5);
+                LogHelper.WriteLine($"刷新 BLE 广播扫描: {reason}");
+                StartAdvertisementWatcher(active: true);
             }
         }
 
         #endregion
 
-        #region DeviceWatcher 处理
+        #region DeviceWatcher
 
-        private void StartWatcher()
+        private void StartWatchers()
+        {
+            if (_bleType != 2)
+                _classicWatcher = CreateWatcher(BluetoothId, "Classic");
+            if (_bleType != 1)
+                _leWatcher = CreateWatcher(BluetoothLEId, "BLE");
+        }
+
+        private DeviceWatcher CreateWatcher(string selector, string type)
         {
             try
             {
-                if (_watcher.Status == DeviceWatcherStatus.Created ||
-                    _watcher.Status == DeviceWatcherStatus.Stopped ||
-                    _watcher.Status == DeviceWatcherStatus.Aborted)
-                {
-                    HookWatcher(_watcher);
-                    _watcher.Start();
-                }
+                var watcher = DeviceInformation.CreateWatcher(
+                    selector, RequestedProperties, DeviceInformationKind.AssociationEndpoint);
+                watcher.Added += (s, info) => OnWatcherAdded(info, type);
+                watcher.Updated += (s, update) => OnWatcherUpdated(update, type);
+                watcher.Removed += Watcher_Removed;
+                watcher.EnumerationCompleted += Watcher_EnumerationCompleted;
+                watcher.Stopped += Watcher_Stopped;
+                watcher.Start();
+                return watcher;
             }
             catch (Exception ex)
             {
-                LogHelper.WriteLine($"启动 DeviceWatcher 失败: {ex.Message}");
+                LogHelper.WriteLine($"启动 {type} DeviceWatcher 失败: {ex.Message}");
+                return null;
             }
         }
 
-        private void StopWatcher()
+        private void StopWatchers()
         {
+            Interlocked.Increment(ref _intentionalStop);
             try
             {
-                UnhookWatcher(_watcher);
-                if (_watcher.Status == DeviceWatcherStatus.Started ||
-                    _watcher.Status == DeviceWatcherStatus.EnumerationCompleted)
+                StopOneWatcher(ref _classicWatcher);
+                StopOneWatcher(ref _leWatcher);
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _intentionalStop);
+            }
+        }
+
+        private static void StopOneWatcher(ref DeviceWatcher watcher)
+        {
+            if (watcher == null) return;
+            try
+            {
+                if (watcher.Status == DeviceWatcherStatus.Started ||
+                    watcher.Status == DeviceWatcherStatus.EnumerationCompleted)
                 {
-                    _watcher.Stop();
+                    watcher.Stop();
                 }
             }
             catch { }
+            watcher = null;
         }
 
-        private void RestartWatcher()
+        private void OnWatcherAdded(DeviceInformation deviceInfo, string type)
         {
-            try
-            {
-                StopWatcher();
-                Thread.Sleep(500);
-
-                var protocolId = _bleType == 1 ? BluetoothId : BluetoothLEId;
-                _watcher = DeviceInformation.CreateWatcher(
-                    protocolId, RequestedProperties, DeviceInformationKind.AssociationEndpoint);
-
-                StartWatcher();
-            }
-            catch (Exception ex)
-            {
-                LogHelper.WriteLine($"重启 DeviceWatcher 失败: {ex.Message}");
-            }
-        }
-
-        private void HookWatcher(DeviceWatcher watcher)
-        {
-            watcher.Added += Watcher_Added;
-            watcher.Updated += Watcher_Updated;
-            watcher.Removed += Watcher_Removed;
-            watcher.EnumerationCompleted += Watcher_EnumerationCompleted;
-            watcher.Stopped += Watcher_Stopped;
-        }
-
-        private void UnhookWatcher(DeviceWatcher watcher)
-        {
-            try
-            {
-                watcher.Added -= Watcher_Added;
-                watcher.Updated -= Watcher_Updated;
-                watcher.Removed -= Watcher_Removed;
-                watcher.EnumerationCompleted -= Watcher_EnumerationCompleted;
-                watcher.Stopped -= Watcher_Stopped;
-            }
-            catch { }
-        }
-
-        private void Watcher_Added(DeviceWatcher watcher, DeviceInformation deviceInfo)
-        {
-            TryGetRssi(deviceInfo.Properties, out short rssi);
-
             var address = GetAddressFromAddEvent(deviceInfo.Properties, deviceInfo.Id);
             if (string.IsNullOrEmpty(address)) return;
 
             var isPaired = GetIsPaired(deviceInfo.Properties);
+            var name = deviceInfo.Name;
 
-            var device = new MybluetoothDevice
+            _devices.AddOrUpdate(address,
+                new MybluetoothDevice
+                {
+                    Name = name ?? "",
+                    Address = address,
+                    Rssi = -100,
+                    Type = type,
+                    IsPaired = isPaired,
+                    IsInRange = false,
+                    LastSeen = DateTime.MinValue
+                },
+                (_, existing) =>
+                {
+                    if (!string.IsNullOrEmpty(name))
+                        existing.Name = name;
+                    if (isPaired)
+                        existing.IsPaired = true;
+                    if (!string.IsNullOrEmpty(type))
+                        existing.Type = type;
+                    return existing;
+                });
+
+            if (HasBool(deviceInfo.Properties, IsConnectedProperty))
             {
-                Name = deviceInfo.Name ?? "",
-                Address = address,
-                Rssi = rssi != 0 ? rssi : (short)-100,
-                Type = _bleType == 1 ? "Classic" : "BLE",
-                IsPaired = isPaired,
-                IsInRange = false,  // 默认不在范围，由连接测试确认
-                LastSeen = DateTime.Now
-            };
+                var connected = GetIsConnected(deviceInfo.Properties);
+                SetWatcherConnected(address, connected);
+                if (connected)
+                    ApplyConnectedPresence(address, name, type);
+            }
 
-            UpsertDevice(address, device, rssi);
-
-            // 注意：DeviceWatcher 返回的 RSSI 可能是 Windows 缓存的旧值
-            // 特别是对于已配对设备，即使设备不在范围，也会返回之前缓存的 RSSI
-            // 因此不能将 DeviceWatcher 的 RSSI 当作"真实 RSSI"
-            // 只有连接测试成功才能确认设备真正在范围内
+            if (TryGetRssi(deviceInfo.Properties, out short rssi))
+                TryAcceptWatcherRssi(address, rssi, name, type, forceTarget: true);
         }
 
-        private void Watcher_Updated(DeviceWatcher watcher, DeviceInformationUpdate update)
+        private void OnWatcherUpdated(DeviceInformationUpdate update, string type)
         {
-            if (!TryGetRssi(update.Properties, out short rssi)) return;
-
-            var address = ExtractAddressFromId(update.Id);
+            var address = GetAddressFromAddEvent(update.Properties, update.Id);
             if (string.IsNullOrEmpty(address)) return;
 
-            UpdateRssiIfChanged(address, rssi);
+            if (HasBool(update.Properties, IsConnectedProperty))
+            {
+                var connected = GetIsConnected(update.Properties);
+                SetWatcherConnected(address, connected);
+                if (connected)
+                    ApplyConnectedPresence(address, null, type);
+            }
 
-            // 注意：DeviceWatcher 返回的 RSSI 可能是 Windows 缓存的值
-            // 不应该作为"真实 RSSI"使用，只有 Inquiry 成功才能确认设备在范围内
-            // 因此这里不更新 _lastRealRssiTime
+            if (TryGetRssi(update.Properties, out short rssi))
+                TryAcceptWatcherRssi(address, rssi, null, type, forceTarget: true);
         }
 
         private void Watcher_Removed(DeviceWatcher watcher, DeviceInformationUpdate update)
         {
-            var address = ExtractAddressFromId(update.Id);
-            if (string.IsNullOrEmpty(address)) return;
-
-            if (_devices.TryGetValue(address, out var device))
-            {
-                if (!device.IsPaired)
-                {
-                    device.Rssi = -100;
-                    device.IsInRange = false;
-                }
-            }
+            // Windows 会周期性触发 Removed，不代表设备真的离开，忽略。
         }
 
         private void Watcher_EnumerationCompleted(DeviceWatcher watcher, object _)
         {
-            LogHelper.WriteLine($"蓝牙枚举完成，发现 {_devices.Count} 个设备");
+            LogHelper.WriteLine($"蓝牙枚举完成，缓存 {_devices.Count} 个设备");
         }
 
         private void Watcher_Stopped(DeviceWatcher watcher, object _)
@@ -918,72 +882,259 @@ namespace UnlockServer
             LogHelper.WriteLine("DeviceWatcher 已停止");
         }
 
-        #endregion
-
-        #region 定时器回调
-
-        private void RescanCallback(object state)
+        private void ScheduleRestart(string reason)
         {
-            if (!_isRunning) return;
+            lock (_scanModeLock)
+            {
+                if (!_isRunning) return;
+                var minGap = _sessionLocked ? 2 : 4;
+                if (_lastWatcherRestart != DateTime.MinValue &&
+                    (DateTime.Now - _lastWatcherRestart).TotalSeconds < minGap)
+                    return;
+                _lastWatcherRestart = DateTime.Now;
+            }
 
+            LogHelper.WriteLine($"重启蓝牙扫描: {reason}");
             try
             {
-                RestartWatcher();
+                StopAdvertisementWatcher();
+                StopWatchers();
+                StartWatchers();
+                if (_bleType != 1)
+                    StartAdvertisementWatcher(active: true);
             }
             catch (Exception ex)
             {
-                LogHelper.WriteLine($"重扫描失败: {ex.Message}");
+                LogHelper.WriteLine($"重启蓝牙扫描失败: {ex.Message}");
             }
         }
 
-        private void CleanupCallback(object state)
+        private void TryAcceptWatcherRssi(string address, short rssi, string name, string type, bool forceTarget = false)
         {
-            if (!_isRunning) return;
-
-            try
+            if (_lastWatcherRssi.TryGetValue(address, out var prev) && prev == rssi)
             {
-                var now = DateTime.Now;
-                var timeout = TimeSpan.FromSeconds(DeviceTimeoutSeconds);
+                if (IsTarget(address) && (forceTarget || IsTargetConnected(address)))
+                    ApplyConnectedPresence(address, name, type);
+                return;
+            }
 
-                foreach (var kvp in _devices)
+            _lastWatcherRssi[address] = rssi;
+            ApplyObservation(address, rssi, true, name, type);
+        }
+
+        #endregion
+
+        #region 定时器：Inquiry / 连接状态 / 新鲜度
+
+        private void InquiryCallback(object state)
+        {
+            if (!_isRunning || _targets.IsEmpty) return;
+
+            Task.Run(() =>
+            {
+                try
                 {
-                    var device = kvp.Value;
-                    if (!device.IsPaired && (now - device.LastSeen) > timeout)
+                    foreach (var target in _targets.Keys)
                     {
-                        _devices.TryRemove(kvp.Key, out _);
+                        if (InquireTargetPresent(target, out var name, out var connected) && connected)
+                        {
+                            SetWatcherConnected(target, true);
+                            ApplyConnectedPresence(target, name, "Classic");
+                        }
                     }
                 }
-            }
-            catch (Exception ex)
+                catch (Exception ex)
+                {
+                    LogHelper.WriteLine($"Inquiry 失败: {ex.Message}");
+                }
+            });
+        }
+
+        private bool InquireTargetPresent(string target, out string name, out bool connected)
+        {
+            name = null;
+            connected = false;
+
+            var search = new BLUETOOTH_DEVICE_SEARCH_PARAMS
             {
-                LogHelper.WriteLine($"清理超时设备失败: {ex.Message}");
+                dwSize = Marshal.SizeOf(typeof(BLUETOOTH_DEVICE_SEARCH_PARAMS)),
+                fReturnAuthenticated = true,
+                fReturnRemembered = true,
+                fReturnUnknown = true,
+                fReturnConnected = true,
+                fIssueInquiry = false,
+                cTimeoutMultiplier = 1,
+                hRadio = IntPtr.Zero
+            };
+
+            var info = new BLUETOOTH_DEVICE_INFO
+            {
+                dwSize = Marshal.SizeOf(typeof(BLUETOOTH_DEVICE_INFO))
+            };
+
+            var handle = BluetoothFindFirstDevice(ref search, ref info);
+            if (handle == IntPtr.Zero) return false;
+
+            try
+            {
+                do
+                {
+                    var address = FormatFromUlong(info.Address);
+                    if (!address.Equals(target, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    name = info.szName;
+                    connected = info.fConnected;
+                    return true;
+                } while (BluetoothFindNextDevice(handle, ref info));
+            }
+            finally
+            {
+                BluetoothFindDeviceClose(handle);
+            }
+
+            return false;
+        }
+
+        private void StaleCallback(object state)
+        {
+            if (!_isRunning) return;
+            if (DateTime.Now < _holdStaleUntil) return;
+            if (_sessionLocked) return;
+
+            if (_advWatcher == null ||
+                _advWatcher.Status == BluetoothLEAdvertisementWatcherStatus.Aborted ||
+                _advWatcher.Status == BluetoothLEAdvertisementWatcherStatus.Stopped ||
+                !IsAdvertisementAlive)
+            {
+                RefreshAdvertisementWatcher(_advWatcher == null ? "watcher missing" : "ads silent");
+                return;
+            }
+
+            foreach (var device in _devices.Values)
+            {
+                if (!IsTarget(device.Address)) continue;
+                if (!device.IsInRange) continue;
+                if (IsFresh(device) || IsTargetConnected(device.Address)) continue;
+                if (LooksLikeScanStall(device.LastSeen))
+                    continue;
+
+                SetInRange(device, false);
+                device.Rssi = -100;
+                OnRssiUpdated?.Invoke(device.Address, -100, false);
             }
         }
 
         #endregion
 
-        #region 辅助方法
+        #region 观测合并
 
-        private static string NormalizeAddress(string s)
+        private void ApplyObservation(string address, short rssi, bool isRealRssi, string name, string type)
+        {
+            if (string.IsNullOrEmpty(address)) return;
+
+            _lastAnyObservation = DateTime.Now;
+
+            var reportRssi = rssi;
+            if (IsTarget(address) && isRealRssi)
+            {
+                var smoother = _smoothers.GetOrAdd(address, _ => new RssiSmoother());
+                reportRssi = smoother.Update(rssi);
+            }
+
+            var isNew = !_devices.ContainsKey(address);
+            var device = _devices.AddOrUpdate(address,
+                new MybluetoothDevice
+                {
+                    Name = name ?? "",
+                    Address = address,
+                    Rssi = reportRssi,
+                    Type = type,
+                    HasRealRssi = isRealRssi,
+                    LastSeen = DateTime.Now,
+                    IsInRange = true
+                },
+                (_, existing) =>
+                {
+                    if (!string.IsNullOrEmpty(name))
+                        existing.Name = name;
+                    if (isRealRssi || !existing.HasRealRssi)
+                    {
+                        if (Math.Abs(existing.Rssi - reportRssi) >= RssiDeltaThreshold || existing.Rssi <= -100)
+                            existing.Rssi = reportRssi;
+                        existing.HasRealRssi = existing.HasRealRssi || isRealRssi;
+                    }
+                    existing.LastSeen = DateTime.Now;
+                    existing.Type = type;
+                    return existing;
+                });
+
+            if (IsTarget(address))
+            {
+                SetInRange(device, true);
+                OnRssiUpdated?.Invoke(address, device.Rssi, device.HasRealRssi);
+                if (isNew)
+                    LogHelper.WriteLine($"发现目标设备: {device.Name}[{address}] {reportRssi}dBm");
+            }
+            else
+            {
+                device.IsInRange = true;
+            }
+        }
+
+        private void ApplyConnectedPresence(string address, string name, string type = null)
+        {
+            if (string.IsNullOrEmpty(address)) return;
+
+            if (_devices.TryGetValue(address, out var device) && device.HasRealRssi && IsFresh(device))
+            {
+                device.LastSeen = DateTime.Now;
+                SetInRange(device, true);
+                return;
+            }
+
+            ApplyObservation(address, FallbackInRangeRssi, false, name, type ?? "BLE");
+        }
+
+        private void SetInRange(MybluetoothDevice device, bool inRange)
+        {
+            if (device.IsInRange == inRange) return;
+            device.IsInRange = inRange;
+            OnDeviceStatusChanged?.Invoke(device.Address, inRange);
+            LogHelper.WriteLine($"设备 {device.Address} 状态: {(inRange ? "在范围内" : "不在范围内")}");
+        }
+
+        private bool IsFresh(MybluetoothDevice device)
+        {
+            if (device == null) return false;
+            if (IsTargetConnected(device.Address)) return true;
+            if (device.LastSeen == DateTime.MinValue) return false;
+            return (DateTime.Now - device.LastSeen).TotalSeconds <= _presenceTimeoutSeconds;
+        }
+
+        #endregion
+
+        #region 辅助
+
+        private static void DisposeTimer(ref Timer timer)
+        {
+            timer?.Dispose();
+            timer = null;
+        }
+
+        public static string NormalizeAddress(string s)
         {
             if (string.IsNullOrWhiteSpace(s)) return null;
 
             var bracketStart = s.LastIndexOf('[');
             var bracketEnd = s.LastIndexOf(']');
             if (bracketStart >= 0 && bracketEnd > bracketStart)
-            {
                 s = s.Substring(bracketStart + 1, bracketEnd - bracketStart - 1);
-            }
 
             var matches = MacRegex.Matches(s);
             if (matches.Count > 0)
                 return matches[matches.Count - 1].Value.ToUpperInvariant();
 
-            var idx = s.LastIndexOf('-');
-            if (idx >= 0 && idx + 1 < s.Length)
-                return s.Substring(idx + 1).Trim().ToUpperInvariant();
-
-            // 尝试格式化为标准 MAC 地址
             var hex = Regex.Replace(s, "[^0-9A-Fa-f]", "");
             if (hex.Length == 12)
             {
@@ -991,18 +1142,36 @@ namespace UnlockServer
                     Enumerable.Range(0, 6).Select(i => hex.Substring(i * 2, 2))).ToUpperInvariant();
             }
 
+            var idx = s.LastIndexOf('-');
+            if (idx >= 0 && idx + 1 < s.Length)
+                return s.Substring(idx + 1).Trim().ToUpperInvariant();
+
             return s.Trim().ToUpperInvariant();
         }
 
-        private static string FormatMacAddress(string address)
+        public static string FormatMacAddress(string address)
         {
-            if (string.IsNullOrEmpty(address)) return null;
+            return NormalizeAddress(address);
+        }
 
-            var hex = Regex.Replace(address, "[^0-9A-Fa-f]", "");
-            if (hex.Length != 12) return address.ToUpperInvariant();
+        public static string FormatFromUlong(ulong address)
+        {
+            var bytes = BitConverter.GetBytes(address);
+            return string.Join(":", Enumerable.Range(0, 6).Select(i => bytes[i].ToString("X2")).Reverse());
+        }
 
-            return string.Join(":",
-                Enumerable.Range(0, 6).Select(i => hex.Substring(i * 2, 2))).ToUpperInvariant();
+        public static ulong ParseBluetoothAddress(string address)
+        {
+            try
+            {
+                var hex = Regex.Replace(address ?? "", "[^0-9A-Fa-f]", "");
+                if (hex.Length != 12) return 0;
+                return Convert.ToUInt64(hex, 16);
+            }
+            catch
+            {
+                return 0;
+            }
         }
 
         private static string GetAddressFromAddEvent(IReadOnlyDictionary<string, object> props, string idFallback)
@@ -1013,13 +1182,7 @@ namespace UnlockServer
 
             var norm = NormalizeAddress(raw);
             if (!string.IsNullOrEmpty(norm)) return norm;
-
             return NormalizeAddress(idFallback);
-        }
-
-        private static string ExtractAddressFromId(string id)
-        {
-            return NormalizeAddress(id);
         }
 
         private static bool TryGetRssi(IReadOnlyDictionary<string, object> props, out short rssi)
@@ -1044,69 +1207,27 @@ namespace UnlockServer
 
         private static bool GetIsPaired(IReadOnlyDictionary<string, object> props)
         {
+            return GetBool(props, IsPairedProperty);
+        }
+
+        private static bool GetIsConnected(IReadOnlyDictionary<string, object> props)
+        {
+            return GetBool(props, IsConnectedProperty);
+        }
+
+        private static bool GetBool(IReadOnlyDictionary<string, object> props, string key)
+        {
             if (props == null) return false;
-            if (!props.TryGetValue(IsPairedProperty, out var val) || val == null) return false;
-
-            try
-            {
-                return Convert.ToBoolean(val);
-            }
-            catch
-            {
-                return false;
-            }
+            if (!props.TryGetValue(key, out var val) || val == null) return false;
+            try { return Convert.ToBoolean(val); }
+            catch { return false; }
         }
 
-        private void UpsertDevice(string address, MybluetoothDevice newDevice, short rssi)
+        private static bool HasBool(IReadOnlyDictionary<string, object> props, string key)
         {
-            _devices.AddOrUpdate(
-                address,
-                addValue: newDevice,
-                updateValueFactory: (_, existing) =>
-                {
-                    if (!string.IsNullOrEmpty(newDevice.Name) &&
-                        !string.Equals(existing.Name, newDevice.Name, StringComparison.Ordinal))
-                        existing.Name = newDevice.Name;
-
-                    if (rssi != 0 && Math.Abs(existing.Rssi - rssi) >= RssiDeltaThreshold)
-                        existing.Rssi = rssi;
-
-                    existing.LastSeen = DateTime.Now;
-                    // 注意：不要在这里设置 IsInRange！
-                    // DeviceWatcher 返回的是缓存数据，不能覆盖连接测试的结果
-                    // IsInRange 只能由 UpdateDeviceStatus 设置（基于连接测试结果）
-                    if (newDevice.IsPaired)
-                        existing.IsPaired = true;
-
-                    return existing;
-                });
-        }
-
-        private void UpdateRssiIfChanged(string address, short rssi)
-        {
-            _devices.AddOrUpdate(
-                address,
-                addValue: new MybluetoothDevice
-                {
-                    Name = "",
-                    Address = address,
-                    Rssi = rssi,
-                    Type = _bleType == 1 ? "Classic" : "BLE",
-                    IsInRange = true,
-                    LastSeen = DateTime.Now
-                },
-                updateValueFactory: (_, existing) =>
-                {
-                    if (Math.Abs(existing.Rssi - rssi) >= RssiDeltaThreshold)
-                        existing.Rssi = rssi;
-
-                    existing.LastSeen = DateTime.Now;
-                    existing.IsInRange = true;
-                    return existing;
-                });
+            return props != null && props.TryGetValue(key, out var val) && val != null;
         }
 
         #endregion
     }
 }
-

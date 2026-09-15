@@ -169,7 +169,7 @@ namespace UnlockServer.Views
 
             if (deviceListWindow.ShowDialog() == true)
             {
-                _viewModel.SetSelectedDevice(deviceListWindow.SelectedAddress, deviceListWindow.SelectedBluetoothType);
+                _viewModel.AddBoundDevice(deviceListWindow.SelectedAddress, deviceListWindow.SelectedBluetoothType);
             }
         }
 

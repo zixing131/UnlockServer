@@ -11,7 +11,20 @@ namespace UnlockServer
 
         protected override void OnStartup(StartupEventArgs e)
         {
-            // 单实例检查
+            if (e.Args.Length > 0 &&
+                string.Equals(e.Args[0], LocalUnlock.InstallArg, StringComparison.OrdinalIgnoreCase))
+            {
+                Environment.Exit(LocalUnlock.RunElevatedInstall());
+                return;
+            }
+
+            if (e.Args.Length > 0 &&
+                string.Equals(e.Args[0], LocalUnlock.UninstallArg, StringComparison.OrdinalIgnoreCase))
+            {
+                Environment.Exit(LocalUnlock.RunElevatedUninstall());
+                return;
+            }
+
             const string mutexName = "UnlockServer_SingleInstance_Mutex";
             _mutex = new Mutex(true, mutexName, out bool createdNew);
 
@@ -22,11 +35,12 @@ namespace UnlockServer
                 return;
             }
 
-            // 检查启动参数
             if (e.Args.Length > 0 && e.Args[0].ToLower() == "hide")
             {
                 IsHideRun = true;
             }
+
+            LocalUnlock.EnsureInstalled();
 
             // 全局异常处理
             DispatcherUnhandledException += App_DispatcherUnhandledException;

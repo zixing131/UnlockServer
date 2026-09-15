@@ -26,6 +26,7 @@
     <DefineConstants>DEBUG;TRACE</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
+    <Prefer32Bit>false</Prefer32Bit>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
     <PlatformTarget>AnyCPU</PlatformTarget>
@@ -35,6 +36,7 @@
     <DefineConstants>TRACE</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
+    <Prefer32Bit>false</Prefer32Bit>
   </PropertyGroup>
   <PropertyGroup>
     <ApplicationManifest>Properties\app.manifest</ApplicationManifest>
@@ -49,6 +51,8 @@
     <Reference Include="System.Drawing" />
     <Reference Include="System.Management" />
     <Reference Include="System.Net.Http" />
+    <Reference Include="System.Runtime.Serialization" />
+    <Reference Include="System.Security" />
     <Reference Include="System.Runtime.WindowsRuntime">
       <HintPath>..\UnlockServer\References\System.Runtime.WindowsRuntime.dll</HintPath>
     </Reference>
@@ -100,6 +104,7 @@
     <Compile Include="Converters\RssiToColorConverter.cs" />
     <Compile Include="Converters\RssiToWidthConverter.cs" />
     <Compile Include="Models\BluetoothDeviceModel.cs" />
+    <Compile Include="Models\BoundDevice.cs" />
     <Compile Include="Models\AppSettings.cs" />
     <Compile Include="Services\IBluetoothService.cs" />
     <Compile Include="Services\BluetoothService.cs" />
@@ -116,6 +121,7 @@
       <DependentUpon>DeviceListWindow.xaml</DependentUpon>
       <SubType>Code</SubType>
     </Compile>
+    <Compile Include="Views\ToastService.cs" />
     <Compile Include="Views\MessageDialog.xaml.cs">
       <DependentUpon>MessageDialog.xaml</DependentUpon>
       <SubType>Code</SubType>
@@ -123,6 +129,7 @@
     <Compile Include="Utils\AESUtil.cs" />
     <Compile Include="Utils\AutoStartHelper.cs" />
     <Compile Include="Utils\BluetoothDiscover.cs" />
+    <Compile Include="Utils\LocalUnlock.cs" />
     <Compile Include="Utils\LogHelper.cs" />
     <Compile Include="Utils\OperateIniFile.cs" />
     <Compile Include="Utils\SessionSwitchClass.cs" />
@@ -158,6 +165,12 @@
   </ItemGroup>
   <ItemGroup>
     <Resource Include="Assets\icon.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\UnlockServer.Provider\bin\$(Configuration)\UnlockServer.Provider.dll" Condition="Exists('..\UnlockServer.Provider\bin\$(Configuration)\UnlockServer.Provider.dll')">
+      <Link>UnlockServer.Provider.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <COMReference Include="TaskScheduler">

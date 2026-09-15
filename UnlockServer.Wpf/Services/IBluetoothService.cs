@@ -15,7 +15,7 @@ namespace UnlockServer.Services
         bool IsScanning { get; }
 
         /// <summary>
-        /// 蓝牙类型（1=Classic, 2=BLE）
+        /// 蓝牙类型（0=全部, 1=Classic, 2=BLE）
         /// </summary>
         int BluetoothType { get; set; }
 

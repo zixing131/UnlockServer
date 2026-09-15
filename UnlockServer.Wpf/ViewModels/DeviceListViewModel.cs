@@ -8,6 +8,7 @@ using System.Windows.Threading;
 using UnlockServer.Models;
 using UnlockServer.Services;
 using UnlockServer.Views;
+using UnlockServer;
 
 namespace UnlockServer.ViewModels
 {
@@ -24,10 +25,12 @@ namespace UnlockServer.ViewModels
 
         private ObservableCollection<BluetoothDeviceModel> _devices;
         private BluetoothDeviceModel _selectedDevice;
-        private int _bluetoothType = 1;
+        private int _bluetoothType = 2;
         private bool _isScanning;
         private string _searchText = "";
         private string _selectedAddress;
+        private string _manualAddress = "";
+        private string _scanHint = "手表/手环搜不到时：断开与手机的蓝牙，打开可被发现或心率广播，也可手动输入 MAC。";
 
         // 排序防抖
         private DateTime _lastSortTime = DateTime.MinValue;
@@ -65,6 +68,7 @@ namespace UnlockServer.ViewModels
                 {
                     OnPropertyChanged(nameof(IsClassicBluetooth));
                     OnPropertyChanged(nameof(IsBLE));
+                    OnPropertyChanged(nameof(IsAllBluetooth));
                     RestartScanning();
                 }
             }
@@ -86,6 +90,27 @@ namespace UnlockServer.ViewModels
             {
                 if (value) BluetoothType = 2;
             }
+        }
+
+        public bool IsAllBluetooth
+        {
+            get => _bluetoothType == 0;
+            set
+            {
+                if (value) BluetoothType = 0;
+            }
+        }
+
+        public string ManualAddress
+        {
+            get => _manualAddress;
+            set => SetProperty(ref _manualAddress, value);
+        }
+
+        public string ScanHint
+        {
+            get => _scanHint;
+            set => SetProperty(ref _scanHint, value);
         }
 
         public bool IsScanning
@@ -129,6 +154,7 @@ namespace UnlockServer.ViewModels
 
         public ICommand SelectCommand { get; }
         public ICommand RefreshCommand { get; }
+        public ICommand UseManualAddressCommand { get; }
 
         #endregion
 
@@ -141,9 +167,10 @@ namespace UnlockServer.ViewModels
             _bluetoothType = initialBluetoothType;
             _selectedAddress = initialAddress;
 
-            // 初始化蓝牙服务
-            _bluetoothService = new BluetoothService();
+            _bluetoothService = BluetoothService.Shared;
             _bluetoothService.BluetoothType = _bluetoothType;
+            if (!string.IsNullOrEmpty(_selectedAddress))
+                _bluetoothService.PinAddress(_selectedAddress);
             _bluetoothService.DeviceDiscovered += BluetoothService_DeviceDiscovered;
             _bluetoothService.DeviceUpdated += BluetoothService_DeviceUpdated;
             _bluetoothService.DeviceLost += BluetoothService_DeviceLost;
@@ -158,6 +185,7 @@ namespace UnlockServer.ViewModels
             // 初始化命令
             SelectCommand = new RelayCommand(SelectDevice, CanSelectDevice);
             RefreshCommand = new RelayCommand(_ => RestartScanning());
+            UseManualAddressCommand = new RelayCommand(UseManualAddress);
         }
 
         #endregion
@@ -169,7 +197,7 @@ namespace UnlockServer.ViewModels
             try
             {
                 _bluetoothService.BluetoothType = _bluetoothType;
-                _bluetoothService.StartScan();
+                _bluetoothService.AddScanUser();
                 _refreshTimer.Start();
                 IsScanning = true;
             }
@@ -185,7 +213,7 @@ namespace UnlockServer.ViewModels
             try
             {
                 _refreshTimer.Stop();
-                _bluetoothService.StopScan();
+                _bluetoothService.RemoveScanUser();
                 IsScanning = false;
             }
             catch (Exception ex)
@@ -212,11 +240,36 @@ namespace UnlockServer.ViewModels
             }
 
             // 通过事件通知选择完成
+            var type = SelectedDevice.Type == "BLE" ? 2 : 1;
+            if (_bluetoothType == 1 || _bluetoothType == 2)
+                type = _bluetoothType;
+
             OnDeviceSelected?.Invoke(this, new DeviceSelectedEventArgs
             {
                 Address = $"{SelectedDevice.DisplayName}[{SelectedDevice.Address}]",
-                BluetoothType = _bluetoothType
+                BluetoothType = type
             });
+        }
+
+        private void UseManualAddress(object parameter)
+        {
+            if (!UnlockManager.IsValidBluetoothAddress(ManualAddress))
+            {
+                MessageDialog.ShowWarning("请输入有效的 MAC 地址，例如 AA:BB:CC:DD:EE:FF");
+                return;
+            }
+
+            var device = _bluetoothService.AddManualDevice(ManualAddress);
+            if (device == null)
+            {
+                MessageDialog.ShowError("无法添加该地址");
+                return;
+            }
+
+            AddOrUpdateDevice(device);
+            SelectedDevice = Devices.FirstOrDefault(d =>
+                d.Address.Equals(device.Address, StringComparison.OrdinalIgnoreCase));
+            SelectDevice(null);
         }
 
         #endregion
@@ -249,9 +302,12 @@ namespace UnlockServer.ViewModels
 
         private void RestartScanning()
         {
-            StopScanning();
             Devices.Clear();
-            StartScanning();
+            _bluetoothService.BluetoothType = _bluetoothType;
+            if (_bluetoothService.IsScanning)
+                _bluetoothService.RestartWatchers("device list refresh");
+            else
+                StartScanning();
         }
 
         private void RefreshDeviceList()
@@ -383,7 +439,6 @@ namespace UnlockServer.ViewModels
             _bluetoothService.DeviceDiscovered -= BluetoothService_DeviceDiscovered;
             _bluetoothService.DeviceUpdated -= BluetoothService_DeviceUpdated;
             _bluetoothService.DeviceLost -= BluetoothService_DeviceLost;
-            _bluetoothService.Dispose();
         }
 
         #endregion

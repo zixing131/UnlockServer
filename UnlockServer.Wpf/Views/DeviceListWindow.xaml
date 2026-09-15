@@ -66,25 +66,32 @@
             <Border Grid.Row="1" Margin="16,12,16,0">
                 <StackPanel>
                     <!-- 蓝牙类型选择 -->
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
-                        <RadioButton Content="📶 经典蓝牙" 
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                        <RadioButton Content="全部" 
+                                     Style="{StaticResource ModernRadioButtonStyle}"
+                                     IsChecked="{Binding IsAllBluetooth}"
+                                     FontSize="11" Padding="8,6"
+                                     Margin="0,0,6,0"/>
+                        <RadioButton Content="经典" 
                                      Style="{StaticResource ModernRadioButtonStyle}"
                                      IsChecked="{Binding IsClassicBluetooth}"
-                                     FontSize="12" Padding="12,6"
-                                     Margin="0,0,8,0"/>
-                        <RadioButton Content="📡 BLE低功耗" 
+                                     FontSize="11" Padding="8,6"
+                                     Margin="0,0,6,0"/>
+                        <RadioButton Content="BLE" 
                                      Style="{StaticResource ModernRadioButtonStyle}"
                                      IsChecked="{Binding IsBLE}"
-                                     FontSize="12" Padding="12,6"/>
+                                     FontSize="11" Padding="8,6"/>
                         
-                        <!-- 刷新按钮 -->
                         <Button Content="🔄" 
                                 Style="{StaticResource IconButtonStyle}"
                                 Command="{Binding RefreshCommand}"
                                 ToolTip="刷新列表"
                                 Width="34" Height="34"
-                                Margin="10,0,0,0"/>
+                                Margin="8,0,0,0"/>
                     </StackPanel>
+                    <TextBlock Text="{Binding ScanHint}" FontSize="10"
+                               Foreground="{StaticResource TextDisabledBrush}"
+                               TextWrapping="Wrap" Margin="0,0,0,8"/>
                     
                     <!-- 搜索框 -->
                     <Border Background="{StaticResource SurfaceBrush}" 
@@ -138,6 +145,22 @@
                             </TextBlock>
                         </Grid>
                     </Border>
+                    
+                    <Grid Margin="0,8,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="8"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox Text="{Binding ManualAddress, UpdateSourceTrigger=PropertyChanged}"
+                                 Style="{StaticResource ModernTextBoxStyle}"
+                                 ToolTip="例如 AA:BB:CC:DD:EE:FF"
+                                 Tag="手动输入 MAC"/>
+                        <Button Grid.Column="2" Content="手动绑定"
+                                Style="{StaticResource SecondaryButtonStyle}"
+                                Command="{Binding UseManualAddressCommand}"
+                                Padding="10,6" FontSize="11"/>
+                    </Grid>
                 </StackPanel>
             </Border>
             

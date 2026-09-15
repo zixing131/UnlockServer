@@ -18,6 +18,15 @@ namespace UnlockServer
         [DllImport("user32.dll")]
         private static extern void LockWorkStation();
 
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern IntPtr OpenInputDesktop(uint dwFlags, bool fInherit, uint dwDesiredAccess);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool CloseDesktop(IntPtr hDesktop);
+
+        [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        private static extern bool GetUserObjectInformation(IntPtr hObj, int nIndex, char[] pvInfo, int nLength, out int lpnLengthNeeded);
+
         [DllImport("Wtsapi32.dll", CharSet = CharSet.Unicode)]
         public static extern bool WTSQuerySessionInformationW(IntPtr hServer, uint SessionId, WTS_INFO_CLASS WTSInfoClass, ref IntPtr ppBuffer, ref uint pBytesReturned);
 
@@ -139,6 +148,41 @@ namespace UnlockServer
         }
 
         /// <summary>
+        /// 仅探测解锁服务端口是否可连，不发送凭据。
+        /// </summary>
+        public static bool TestServer(out string message)
+        {
+            try
+            {
+                reloadConfig();
+                if (string.IsNullOrEmpty(ip) || port <= 0)
+                {
+                    message = "请先填写服务器地址和端口";
+                    return false;
+                }
+
+                using (var client = new System.Net.Sockets.TcpClient())
+                {
+                    var ar = client.BeginConnect(ip, port, null, null);
+                    if (!ar.AsyncWaitHandle.WaitOne(2000))
+                    {
+                        message = $"无法连接 {ip}:{port}，请先启动远程解锁服务";
+                        return false;
+                    }
+                    client.EndConnect(ar);
+                }
+
+                message = $"已连接到 {ip}:{port}";
+                return true;
+            }
+            catch (Exception ex)
+            {
+                message = $"连接失败: {ex.Message}";
+                return false;
+            }
+        }
+
+        /// <summary>
         /// 重新加载配置
         /// </summary>
         public static void reloadConfig()
@@ -212,30 +256,67 @@ namespace UnlockServer
         {
             try
             {
+                if (TryGetInputDesktopName(out var desktopName))
+                {
+                    if (desktopName.Equals("Winlogon", StringComparison.OrdinalIgnoreCase) ||
+                        desktopName.Equals("Disconnect", StringComparison.OrdinalIgnoreCase))
+                        return true;
+                    if (desktopName.Equals("Default", StringComparison.OrdinalIgnoreCase))
+                        return false;
+                }
+            }
+            catch { }
+
+            try
+            {
                 uint dwSessionID = WTSGetActiveConsoleSessionId();
                 uint dwBytesReturned = 0;
-                int dwFlags = 0;
                 IntPtr pInfo = IntPtr.Zero;
 
-                WTSQuerySessionInformationW(IntPtr.Zero, dwSessionID, WTS_INFO_CLASS.WTSSessionInfoEx, ref pInfo, ref dwBytesReturned);
-                var info = Marshal.PtrToStructure<WTSINFOEXW>(pInfo);
+                if (!WTSQuerySessionInformationW(IntPtr.Zero, dwSessionID, WTS_INFO_CLASS.WTSSessionInfoEx, ref pInfo, ref dwBytesReturned) ||
+                    pInfo == IntPtr.Zero)
+                    return false;
 
-                if (info.Level == 1)
+                try
                 {
-                    dwFlags = info.Data.WTSInfoExLevel1.SessionFlags;
+                    var info = Marshal.PtrToStructure<WTSINFOEXW>(pInfo);
+                    if (info.Level == 1)
+                    {
+                        var flags = info.Data.WTSInfoExLevel1.SessionFlags;
+                        if (flags == 0) return true;
+                        if (flags == 1) return false;
+                    }
                 }
-
-                switch (dwFlags)
+                finally
                 {
-                    case 0: return true;  // 已锁定
-                    case 1: return false; // 未锁定
-                    default: return false;
+                    WTSFreeMemory(pInfo);
                 }
             }
             catch (Exception ex)
             {
                 LogHelper.WriteLine($"检查会话锁定状态失败: {ex.Message}");
-                return false;
+            }
+            return false;
+        }
+
+        private static bool TryGetInputDesktopName(out string name)
+        {
+            name = null;
+            const uint DESKTOP_READOBJECTS = 0x0001;
+            const int UOI_NAME = 2;
+            var h = OpenInputDesktop(0, false, DESKTOP_READOBJECTS);
+            if (h == IntPtr.Zero) return false;
+            try
+            {
+                var buffer = new char[256];
+                if (!GetUserObjectInformation(h, UOI_NAME, buffer, buffer.Length * 2, out _))
+                    return false;
+                name = new string(buffer).TrimEnd('\0');
+                return !string.IsNullOrEmpty(name);
+            }
+            finally
+            {
+                CloseDesktop(h);
             }
         }
     }
