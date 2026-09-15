@@ -13,7 +13,7 @@ namespace UnlockServer.Models
         private bool _enabled = true;
         private short _rssi = -100;
         private bool _isInRange;
-        private string _statusText = "未检测到";
+        private string _statusText = "等待中";
 
         [DataMember]
         public string Name

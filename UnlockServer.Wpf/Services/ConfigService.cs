@@ -39,14 +39,17 @@ namespace UnlockServer.Services
                 settings.DeviceAddress = OperateIniFile.ReadSafeString("setting", "address", "");
                 settings.BluetoothType = OperateIniFile.ReadIniInt("setting", "type", 1);
 
-                settings.AutoLock = OperateIniFile.ReadIniInt("setting", "autolock", 0) == 1;
-                settings.AutoUnlock = OperateIniFile.ReadIniInt("setting", "autounlock", 0) == 1;
+                settings.AutoLock = OperateIniFile.ReadIniInt("setting", "autolock", 1) == 1;
+                settings.AutoUnlock = OperateIniFile.ReadIniInt("setting", "autounlock", 1) == 1;
                 settings.ManualLock = OperateIniFile.ReadIniInt("setting", "manuallock", 1) == 1;
                 settings.ManualUnlock = OperateIniFile.ReadIniInt("setting", "manualunlock", 0) == 1;
 
                 // 读取延迟设置
                 settings.LockDelay = OperateIniFile.ReadIniInt("setting", "lockdelay", 15);
                 settings.UnlockDelay = OperateIniFile.ReadIniInt("setting", "unlockdelay", 3);
+                settings.ActionWarnSeconds = OperateIniFile.ReadIniInt("setting", "actionwarn", 10);
+                settings.LockOnlyWhenIdle = OperateIniFile.ReadIniInt("setting", "lockonlyidle", 1) == 1;
+                settings.IdleLockSeconds = OperateIniFile.ReadIniInt("setting", "idlelock", 30);
                 settings.HysteresisDb = OperateIniFile.ReadIniInt("setting", "hysteresis", 8);
                 settings.PresenceTimeout = OperateIniFile.ReadIniInt("setting", "presencetimeout", 8);
                 settings.RequireAllDevices = OperateIniFile.ReadIniInt("setting", "requireall", 0) == 1;
@@ -96,6 +99,9 @@ namespace UnlockServer.Services
                 // 保存延迟设置
                 OperateIniFile.WriteIniInt("setting", "lockdelay", settings.LockDelay);
                 OperateIniFile.WriteIniInt("setting", "unlockdelay", settings.UnlockDelay);
+                OperateIniFile.WriteIniInt("setting", "actionwarn", settings.ActionWarnSeconds);
+                OperateIniFile.WriteIniInt("setting", "lockonlyidle", settings.LockOnlyWhenIdle ? 1 : 0);
+                OperateIniFile.WriteIniInt("setting", "idlelock", settings.IdleLockSeconds);
                 OperateIniFile.WriteIniInt("setting", "hysteresis", settings.HysteresisDb);
                 OperateIniFile.WriteIniInt("setting", "presencetimeout", settings.PresenceTimeout);
                 OperateIniFile.WriteIniInt("setting", "requireall", settings.RequireAllDevices ? 1 : 0);

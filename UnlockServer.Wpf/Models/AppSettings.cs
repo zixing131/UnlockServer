@@ -15,13 +15,16 @@ namespace UnlockServer.Models
         private int _rssiThreshold = -70;
         private string _deviceAddress = "";
         private int _bluetoothType = 2; // 1=Classic, 2=BLE
-        private bool _autoLock = false;
-        private bool _autoUnlock = false;
+        private bool _autoLock = true;
+        private bool _autoUnlock = true;
         private bool _manualLock = true;
         private bool _manualUnlock = false;
         private bool _autoStart = false;
         private int _lockDelay = 15;
         private int _unlockDelay = 3;
+        private int _actionWarnSeconds = 10;
+        private bool _lockOnlyWhenIdle = true;
+        private int _idleLockSeconds = 30;
         private int _hysteresisDb = 8;
         private int _presenceTimeout = 8;
         private bool _requireAllDevices;
@@ -152,6 +155,30 @@ namespace UnlockServer.Models
         {
             get => _unlockDelay;
             set => SetProperty(ref _unlockDelay, value);
+        }
+
+        /// <summary>
+        /// 锁屏/解锁前的提示秒数。0 表示不提示，直接执行。
+        /// </summary>
+        public int ActionWarnSeconds
+        {
+            get => _actionWarnSeconds;
+            set => SetProperty(ref _actionWarnSeconds, value < 0 ? 0 : value);
+        }
+
+        /// <summary>
+        /// 仅在键盘鼠标空闲指定秒数后，才根据蓝牙离开锁屏。
+        /// </summary>
+        public bool LockOnlyWhenIdle
+        {
+            get => _lockOnlyWhenIdle;
+            set => SetProperty(ref _lockOnlyWhenIdle, value);
+        }
+
+        public int IdleLockSeconds
+        {
+            get => _idleLockSeconds;
+            set => SetProperty(ref _idleLockSeconds, value < 1 ? 1 : value);
         }
 
         /// <summary>

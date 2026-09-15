@@ -21,7 +21,7 @@
                             Background="{TemplateBinding Background}"
                             BorderBrush="{TemplateBinding BorderBrush}"
                             BorderThickness="{TemplateBinding BorderThickness}"
-                            CornerRadius="8"
+                            CornerRadius="10"
                             SnapsToDevicePixels="True">
                         <ContentPresenter HorizontalAlignment="Center" 
                                           VerticalAlignment="Center"
@@ -51,7 +51,7 @@
         <Setter Property="FontSize" Value="14"/>
         <Setter Property="Padding" Value="20,10"/>
         <Setter Property="BorderBrush" Value="{StaticResource PrimaryBrush}"/>
-        <Setter Property="BorderThickness" Value="2"/>
+        <Setter Property="BorderThickness" Value="1"/>
         <Setter Property="Cursor" Value="Hand"/>
         <Setter Property="Template">
             <Setter.Value>
@@ -60,7 +60,7 @@
                             Background="{TemplateBinding Background}"
                             BorderBrush="{TemplateBinding BorderBrush}"
                             BorderThickness="{TemplateBinding BorderThickness}"
-                            CornerRadius="8"
+                            CornerRadius="10"
                             SnapsToDevicePixels="True">
                         <ContentPresenter HorizontalAlignment="Center" 
                                           VerticalAlignment="Center"
@@ -70,7 +70,7 @@
                         <Trigger Property="IsMouseOver" Value="True">
                             <Setter TargetName="border" Property="Background">
                                 <Setter.Value>
-                                    <SolidColorBrush Color="{StaticResource PrimaryColor}" Opacity="0.1"/>
+                                    <SolidColorBrush Color="{StaticResource PrimaryColor}" Opacity="0.12"/>
                                 </Setter.Value>
                             </Setter>
                         </Trigger>
@@ -141,7 +141,7 @@
                             Background="{TemplateBinding Background}"
                             BorderBrush="{TemplateBinding BorderBrush}"
                             BorderThickness="{TemplateBinding BorderThickness}"
-                            CornerRadius="6"
+                            CornerRadius="8"
                             SnapsToDevicePixels="True">
                         <ScrollViewer x:Name="PART_ContentHost" 
                                       Focusable="False"
@@ -155,7 +155,6 @@
                         </Trigger>
                         <Trigger Property="IsFocused" Value="True">
                             <Setter TargetName="border" Property="BorderBrush" Value="{StaticResource PrimaryBrush}"/>
-                            <Setter TargetName="border" Property="BorderThickness" Value="2"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
@@ -180,7 +179,7 @@
                             Background="{TemplateBinding Background}"
                             BorderBrush="{TemplateBinding BorderBrush}"
                             BorderThickness="{TemplateBinding BorderThickness}"
-                            CornerRadius="6"
+                            CornerRadius="8"
                             SnapsToDevicePixels="True">
                         <ScrollViewer x:Name="PART_ContentHost" 
                                       Focusable="False"
@@ -194,7 +193,6 @@
                         </Trigger>
                         <Trigger Property="IsFocused" Value="True">
                             <Setter TargetName="border" Property="BorderBrush" Value="{StaticResource PrimaryBrush}"/>
-                            <Setter TargetName="border" Property="BorderThickness" Value="2"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
@@ -281,10 +279,10 @@
     
     <!-- 卡片样式 -->
     <Style x:Key="CardStyle" TargetType="Border">
-        <Setter Property="Background" Value="{StaticResource CardBrush}"/>
+        <Setter Property="Background" Value="{StaticResource CardGradientBrush}"/>
         <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
         <Setter Property="BorderThickness" Value="1"/>
-        <Setter Property="CornerRadius" Value="12"/>
+        <Setter Property="CornerRadius" Value="14"/>
         <Setter Property="Padding" Value="16"/>
     </Style>
     
@@ -292,16 +290,16 @@
     <Style x:Key="DeviceListItemStyle" TargetType="ListBoxItem">
         <Setter Property="Background" Value="Transparent"/>
         <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
-        <Setter Property="Padding" Value="12"/>
-        <Setter Property="Margin" Value="0,4"/>
+        <Setter Property="Padding" Value="8,6"/>
+        <Setter Property="Margin" Value="0,3"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ListBoxItem">
                     <Border x:Name="border"
-                            Background="{TemplateBinding Background}"
+                            Background="{StaticResource SurfaceBrush}"
                             BorderBrush="{StaticResource BorderBrush}"
                             BorderThickness="1"
-                            CornerRadius="8"
+                            CornerRadius="10"
                             Padding="{TemplateBinding Padding}">
                         <ContentPresenter/>
                     </Border>
@@ -377,7 +375,7 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="Button">
-                    <Border x:Name="border" Background="{TemplateBinding Background}" CornerRadius="8"
+                    <Border x:Name="border" Background="{TemplateBinding Background}" CornerRadius="9"
                             Padding="{TemplateBinding Padding}">
                         <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Border>
@@ -395,6 +393,41 @@
     <Style x:Key="TabChipActiveStyle" TargetType="Button" BasedOn="{StaticResource TabChipStyle}">
         <Setter Property="Background" Value="{StaticResource PrimaryBrush}"/>
         <Setter Property="Foreground" Value="White"/>
+    </Style>
+
+    <Style x:Key="SettingFieldStyle" TargetType="Border">
+        <Setter Property="Background" Value="{StaticResource SurfaceBrush}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="10"/>
+        <Setter Property="Padding" Value="10,8"/>
+        <Setter Property="MinHeight" Value="40"/>
+    </Style>
+
+    <Style x:Key="SettingLabelStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource DefaultFont}"/>
+        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+        <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+        <Setter Property="Margin" Value="0,0,8,0"/>
+    </Style>
+
+    <Style x:Key="SettingValueBoxStyle" TargetType="TextBox" BasedOn="{StaticResource ModernTextBoxStyle}">
+        <Setter Property="Width" Value="44"/>
+        <Setter Property="Padding" Value="4,5"/>
+        <Setter Property="TextAlignment" Value="Center"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+        <Setter Property="FontSize" Value="13"/>
+    </Style>
+
+    <Style x:Key="SettingUnitStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource DefaultFont}"/>
+        <Setter Property="FontSize" Value="11"/>
+        <Setter Property="Foreground" Value="{StaticResource TextDisabledBrush}"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+        <Setter Property="Margin" Value="6,0,0,0"/>
+        <Setter Property="MinWidth" Value="22"/>
     </Style>
 
     <Style x:Key="GhostButtonStyle" TargetType="Button">

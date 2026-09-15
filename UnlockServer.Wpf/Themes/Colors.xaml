@@ -1,80 +1,80 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    
-    <!-- 主色调 - 蓝牙蓝 -->
-    <Color x:Key="PrimaryColor">#0078D4</Color>
-    <Color x:Key="PrimaryLightColor">#50A0E8</Color>
-    <Color x:Key="PrimaryDarkColor">#005A9E</Color>
-    
-    <!-- 强调色 -->
-    <Color x:Key="AccentColor">#00B294</Color>
-    <Color x:Key="AccentLightColor">#4DD0B8</Color>
-    
-    <!-- 状态色 -->
-    <Color x:Key="SuccessColor">#10B981</Color>
-    <Color x:Key="WarningColor">#F59E0B</Color>
-    <Color x:Key="ErrorColor">#EF4444</Color>
-    <Color x:Key="InfoColor">#3B82F6</Color>
-    
-    <!-- 信号强度色 -->
-    <Color x:Key="SignalExcellentColor">#10B981</Color>
-    <Color x:Key="SignalGoodColor">#84CC16</Color>
-    <Color x:Key="SignalFairColor">#F59E0B</Color>
-    <Color x:Key="SignalWeakColor">#EF4444</Color>
-    
-    <!-- 背景色 - 深色主题 -->
-    <Color x:Key="BackgroundColor">#1E1E2E</Color>
-    <Color x:Key="SurfaceColor">#2D2D3D</Color>
-    <Color x:Key="CardColor">#363648</Color>
-    <Color x:Key="BorderColor">#45455A</Color>
-    
-    <!-- 文字色 -->
-    <Color x:Key="TextPrimaryColor">#FFFFFF</Color>
-    <Color x:Key="TextSecondaryColor">#A0A0B0</Color>
-    <Color x:Key="TextDisabledColor">#606070</Color>
-    
-    <!-- 画刷 -->
+
+    <Color x:Key="PrimaryColor">#4C8DFF</Color>
+    <Color x:Key="PrimaryLightColor">#7AADFF</Color>
+    <Color x:Key="PrimaryDarkColor">#2F6FE0</Color>
+
+    <Color x:Key="AccentColor">#22C7B8</Color>
+    <Color x:Key="AccentLightColor">#5EE0D2</Color>
+
+    <Color x:Key="SuccessColor">#34D399</Color>
+    <Color x:Key="WarningColor">#F5B942</Color>
+    <Color x:Key="ErrorColor">#F87171</Color>
+    <Color x:Key="InfoColor">#60A5FA</Color>
+
+    <Color x:Key="SignalExcellentColor">#34D399</Color>
+    <Color x:Key="SignalGoodColor">#A3E635</Color>
+    <Color x:Key="SignalFairColor">#F5B942</Color>
+    <Color x:Key="SignalWeakColor">#F87171</Color>
+
+    <Color x:Key="BackgroundColor">#12121A</Color>
+    <Color x:Key="SurfaceColor">#1A1A26</Color>
+    <Color x:Key="CardColor">#222232</Color>
+    <Color x:Key="BorderColor">#34344A</Color>
+
+    <Color x:Key="TextPrimaryColor">#F4F4F8</Color>
+    <Color x:Key="TextSecondaryColor">#A8A8BC</Color>
+    <Color x:Key="TextDisabledColor">#6B6B80</Color>
+
     <SolidColorBrush x:Key="PrimaryBrush" Color="{StaticResource PrimaryColor}"/>
     <SolidColorBrush x:Key="PrimaryLightBrush" Color="{StaticResource PrimaryLightColor}"/>
     <SolidColorBrush x:Key="PrimaryDarkBrush" Color="{StaticResource PrimaryDarkColor}"/>
-    
+
     <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource AccentColor}"/>
     <SolidColorBrush x:Key="AccentLightBrush" Color="{StaticResource AccentLightColor}"/>
-    
+
     <SolidColorBrush x:Key="SuccessBrush" Color="{StaticResource SuccessColor}"/>
     <SolidColorBrush x:Key="WarningBrush" Color="{StaticResource WarningColor}"/>
     <SolidColorBrush x:Key="ErrorBrush" Color="{StaticResource ErrorColor}"/>
     <SolidColorBrush x:Key="InfoBrush" Color="{StaticResource InfoColor}"/>
-    
+
     <SolidColorBrush x:Key="SignalExcellentBrush" Color="{StaticResource SignalExcellentColor}"/>
     <SolidColorBrush x:Key="SignalGoodBrush" Color="{StaticResource SignalGoodColor}"/>
     <SolidColorBrush x:Key="SignalFairBrush" Color="{StaticResource SignalFairColor}"/>
     <SolidColorBrush x:Key="SignalWeakBrush" Color="{StaticResource SignalWeakColor}"/>
-    
+
     <SolidColorBrush x:Key="BackgroundBrush" Color="{StaticResource BackgroundColor}"/>
     <SolidColorBrush x:Key="SurfaceBrush" Color="{StaticResource SurfaceColor}"/>
     <SolidColorBrush x:Key="CardBrush" Color="{StaticResource CardColor}"/>
     <SolidColorBrush x:Key="BorderBrush" Color="{StaticResource BorderColor}"/>
-    
+
     <SolidColorBrush x:Key="TextPrimaryBrush" Color="{StaticResource TextPrimaryColor}"/>
     <SolidColorBrush x:Key="TextSecondaryBrush" Color="{StaticResource TextSecondaryColor}"/>
     <SolidColorBrush x:Key="TextDisabledBrush" Color="{StaticResource TextDisabledColor}"/>
-    
-    <!-- 渐变画刷 -->
+
     <LinearGradientBrush x:Key="PrimaryGradientBrush" StartPoint="0,0" EndPoint="1,1">
-        <GradientStop Color="{StaticResource PrimaryColor}" Offset="0"/>
-        <GradientStop Color="{StaticResource PrimaryLightColor}" Offset="1"/>
+        <GradientStop Color="#4C8DFF" Offset="0"/>
+        <GradientStop Color="#22C7B8" Offset="1"/>
     </LinearGradientBrush>
-    
+
     <LinearGradientBrush x:Key="AccentGradientBrush" StartPoint="0,0" EndPoint="1,1">
         <GradientStop Color="{StaticResource AccentColor}" Offset="0"/>
         <GradientStop Color="{StaticResource AccentLightColor}" Offset="1"/>
     </LinearGradientBrush>
-    
+
     <LinearGradientBrush x:Key="CardGradientBrush" StartPoint="0,0" EndPoint="0,1">
-        <GradientStop Color="#3D3D50" Offset="0"/>
+        <GradientStop Color="#2A2A3C" Offset="0"/>
         <GradientStop Color="{StaticResource CardColor}" Offset="1"/>
     </LinearGradientBrush>
-    
-</ResourceDictionary>
 
+    <LinearGradientBrush x:Key="TitleGradientBrush" StartPoint="0,0" EndPoint="1,0">
+        <GradientStop Color="#1E1E2C" Offset="0"/>
+        <GradientStop Color="#161622" Offset="1"/>
+    </LinearGradientBrush>
+
+    <LinearGradientBrush x:Key="WindowGradientBrush" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="#16161F" Offset="0"/>
+        <GradientStop Color="#101018" Offset="1"/>
+    </LinearGradientBrush>
+</ResourceDictionary>

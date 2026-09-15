@@ -18,6 +18,7 @@
 #pragma comment(lib, "crypt32.lib")
 #pragma comment(lib, "uuid.lib")
 #pragma comment(lib, "gdi32.lib")
+#pragma comment(lib, "user32.lib")
 
 static HMODULE g_hModule = nullptr;
 static LONG g_dllRef = 0;
@@ -30,9 +31,11 @@ static const wchar_t kProviderKey[] =
 static const wchar_t kEventName[] = L"Global\\UnlockServer.UnlockPulse";
 static const wchar_t kCredPath[] = L"C:\\ProgramData\\UnlockServer\\local.cred";
 static const wchar_t kReqPath[] = L"C:\\ProgramData\\UnlockServer\\unlock.req";
+static const wchar_t kWarnPath[] = L"C:\\ProgramData\\UnlockServer\\unlock.warn";
+static const wchar_t kCancelPath[] = L"C:\\ProgramData\\UnlockServer\\unlock.cancel";
 static const wchar_t kLogPath[] = L"C:\\ProgramData\\UnlockServer\\provider.log";
 
-enum FieldId { FID_TILE = 0, FID_TITLE = 1, FID_SUBTITLE = 2, FID_COUNT = 3 };
+enum FieldId { FID_TILE = 0, FID_TITLE = 1, FID_SUBTITLE = 2, FID_CANCEL = 3, FID_COUNT = 4 };
 
 static HBITMAP CreateTileBitmap()
 {
@@ -149,6 +152,132 @@ static bool IsUnlockRequested()
     unsigned long long nowTicks = now.QuadPart + epochDiff;
     if (nowTicks < ticks) return false;
     return (nowTicks - ticks) < 30ULL * 10000000ULL;
+}
+
+static unsigned long long NowDotNetTicks()
+{
+    FILETIME ft;
+    GetSystemTimeAsFileTime(&ft);
+    ULARGE_INTEGER now;
+    now.LowPart = ft.dwLowDateTime;
+    now.HighPart = ft.dwHighDateTime;
+    const unsigned long long epochDiff = 504911232000000000ULL;
+    return now.QuadPart + epochDiff;
+}
+
+static bool GetWarnRemain(int* seconds)
+{
+    if (!seconds) return false;
+    *seconds = 0;
+    char raw[64] = {};
+    if (!ReadUtf8File(kWarnPath, raw, sizeof(raw))) return false;
+    unsigned long long ticks = 0;
+    if (sscanf_s(raw, "%llu", &ticks) != 1 || ticks == 0) return false;
+    unsigned long long nowTicks = NowDotNetTicks();
+    if (nowTicks >= ticks) return false;
+    *seconds = (int)((ticks - nowTicks) / 10000000ULL);
+    return *seconds > 0;
+}
+
+static void AttachInputDesktop()
+{
+    HDESK input = OpenInputDesktop(0, FALSE,
+        DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS | DESKTOP_SWITCHDESKTOP | GENERIC_ALL);
+    if (!input)
+        input = OpenDesktopW(L"Winlogon", 0, FALSE,
+            DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS | DESKTOP_SWITCHDESKTOP | GENERIC_ALL);
+    if (!input) return;
+    SetThreadDesktop(input);
+    CloseDesktop(input);
+}
+
+static void SendAbsMouse(int x, int y, DWORD extraFlags)
+{
+    int w = GetSystemMetrics(SM_CXSCREEN);
+    int h = GetSystemMetrics(SM_CYSCREEN);
+    if (w <= 0) w = 1920;
+    if (h <= 0) h = 1080;
+    INPUT in = {};
+    in.type = INPUT_MOUSE;
+    in.mi.dx = (LONG)((x * 65535LL) / w);
+    in.mi.dy = (LONG)((y * 65535LL) / h);
+    in.mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE | extraFlags;
+    SendInput(1, &in, sizeof(INPUT));
+}
+
+static BOOL CALLBACK EnumLockWnd(HWND hwnd, LPARAM lp)
+{
+    if (!IsWindowVisible(hwnd)) return TRUE;
+    wchar_t cls[128] = {};
+    wchar_t title[128] = {};
+    GetClassNameW(hwnd, cls, 128);
+    GetWindowTextW(hwnd, title, 128);
+    bool hit = wcsstr(cls, L"LockScreen") != nullptr
+        || wcsstr(cls, L"LockApp") != nullptr
+        || _wcsicmp(cls, L"Windows.UI.Core.CoreWindow") == 0
+        || wcsstr(title, L"Lock") != nullptr
+        || wcsstr(title, L"锁屏") != nullptr;
+    if (!hit) return TRUE;
+
+    HWND* out = (HWND*)lp;
+    if (out && !*out)
+        *out = hwnd;
+
+    RECT rc = {};
+    GetWindowRect(hwnd, &rc);
+    LPARAM pos = MAKELPARAM((rc.left + rc.right) / 2, (rc.top + rc.bottom) / 2);
+    PostMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, pos);
+    PostMessageW(hwnd, WM_LBUTTONUP, 0, pos);
+    PostMessageW(hwnd, WM_KEYDOWN, VK_SPACE, 0);
+    PostMessageW(hwnd, WM_KEYUP, VK_SPACE, 0);
+    return TRUE;
+}
+
+static void DismissLockWallpaper()
+{
+    AttachInputDesktop();
+
+    HWND lockWnd = nullptr;
+    EnumWindows(EnumLockWnd, (LPARAM)&lockWnd);
+    HDESK desk = GetThreadDesktop(GetCurrentThreadId());
+    if (desk)
+        EnumDesktopWindows(desk, EnumLockWnd, (LPARAM)&lockWnd);
+    if (lockWnd)
+        SetForegroundWindow(lockWnd);
+
+    int w = GetSystemMetrics(SM_CXSCREEN);
+    int h = GetSystemMetrics(SM_CYSCREEN);
+    if (w <= 0) w = 1920;
+    if (h <= 0) h = 1080;
+    int x = w / 2;
+
+    SendAbsMouse(x, h - 30, MOUSEEVENTF_LEFTDOWN);
+    Sleep(20);
+    for (int i = 1; i <= 10; i++)
+    {
+        SendAbsMouse(x, h - 30 - i * (h / 12), 0);
+        Sleep(12);
+    }
+    SendAbsMouse(x, 40, MOUSEEVENTF_LEFTUP);
+    Sleep(30);
+    SendAbsMouse(x, h / 2, 0);
+    SendAbsMouse(x, h / 2, MOUSEEVENTF_LEFTDOWN);
+    SendAbsMouse(x, h / 2, MOUSEEVENTF_LEFTUP);
+
+    ProvLog("DismissLockWallpaper");
+}
+
+static void WriteCancelFile()
+{
+    HANDLE h = CreateFileW(kCancelPath, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+        nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return;
+    char line[32] = {};
+    int n = sprintf_s(line, "%llu", NowDotNetTicks());
+    DWORD w = 0;
+    if (n > 0) WriteFile(h, line, (DWORD)n, &w, nullptr);
+    CloseHandle(h);
+    DeleteFileW(kWarnPath);
 }
 
 static bool DpapiUnprotectFile(const wchar_t* path, wchar_t* domain, wchar_t* user, wchar_t* pass, wchar_t* sid, DWORD cch)
@@ -310,6 +439,21 @@ public:
         StringCchCopyW(_sid, 128, sid ? sid : L"");
     }
 
+    void RefreshWarnUi()
+    {
+        if (!_events) return;
+        int remain = 0;
+        bool warn = GetWarnRemain(&remain);
+        wchar_t title[96] = {};
+        if (warn)
+            swprintf_s(title, L"即将解锁  %d 秒", remain);
+        else
+            StringCchCopyW(title, 96, L"蓝牙解锁");
+        _events->SetFieldString(this, FID_TITLE, title);
+        _events->SetFieldString(this, FID_SUBTITLE,
+            warn ? L"点下面「取消本次解锁」可停止" : L"设备靠近时自动解锁");
+    }
+
     IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv)
     {
         if (riid == IID_IUnknown || riid == IID_ICredentialProviderCredential ||
@@ -351,17 +495,40 @@ public:
     IFACEMETHODIMP GetFieldState(DWORD fid, CREDENTIAL_PROVIDER_FIELD_STATE* pfs, CREDENTIAL_PROVIDER_FIELD_INTERACTIVE_STATE* pfis)
     {
         *pfis = CPFIS_NONE;
+        int remain = 0;
+        bool warn = GetWarnRemain(&remain);
         if (fid == FID_TILE || fid == FID_TITLE)
             *pfs = CPFS_DISPLAY_IN_BOTH;
+        else if (fid == FID_CANCEL)
+            *pfs = CPFS_DISPLAY_IN_SELECTED_TILE;
         else
             *pfs = CPFS_DISPLAY_IN_SELECTED_TILE;
         return S_OK;
     }
     IFACEMETHODIMP GetStringValue(DWORD fid, LPWSTR* ppsz)
     {
+        int remain = 0;
+        bool warn = GetWarnRemain(&remain);
+        wchar_t buf[96] = {};
         const wchar_t* text = L"";
-        if (fid == FID_TITLE) text = L"UnlockServer";
-        else if (fid == FID_SUBTITLE) text = L"Unlock when a bound device is nearby";
+        if (fid == FID_TITLE)
+        {
+            if (warn)
+            {
+                swprintf_s(buf, L"即将解锁  %d 秒", remain);
+                text = buf;
+            }
+            else
+                text = L"蓝牙解锁";
+        }
+        else if (fid == FID_SUBTITLE)
+        {
+            text = warn ? L"点下面「取消本次解锁」可停止" : L"设备靠近时自动解锁";
+        }
+        else if (fid == FID_CANCEL)
+        {
+            text = L"取消本次解锁";
+        }
         return SHStrDupW(text, ppsz);
     }
     IFACEMETHODIMP GetBitmapValue(DWORD fid, HBITMAP* phbmp)
@@ -379,7 +546,18 @@ public:
     IFACEMETHODIMP SetStringValue(DWORD, LPCWSTR) { return E_NOTIMPL; }
     IFACEMETHODIMP SetCheckboxValue(DWORD, BOOL) { return E_NOTIMPL; }
     IFACEMETHODIMP SetComboBoxSelectedValue(DWORD, DWORD) { return E_NOTIMPL; }
-    IFACEMETHODIMP CommandLinkClicked(DWORD) { return E_NOTIMPL; }
+    IFACEMETHODIMP CommandLinkClicked(DWORD fid)
+    {
+        if (fid != FID_CANCEL) return E_NOTIMPL;
+        WriteCancelFile();
+        ProvLog("user cancelled pending unlock");
+        if (_events)
+        {
+            _events->SetFieldString(this, FID_TITLE, L"已取消本次解锁");
+            _events->SetFieldString(this, FID_SUBTITLE, L"设备离开后再靠近才会再次解锁");
+        }
+        return S_OK;
+    }
 
     IFACEMETHODIMP GetSerialization(CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE* pcpgsr,
         CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION* pcpcs,
@@ -461,7 +639,7 @@ class UnlockProvider : public ICredentialProvider, public ICredentialProviderSet
 {
 public:
     UnlockProvider() : _ref(1), _cpus(CPUS_INVALID), _events(nullptr), _upAdvise(0),
-        _cred(nullptr), _stop(nullptr), _thread(nullptr)
+        _cred(nullptr), _stop(nullptr), _thread(nullptr), _warnActive(false), _lastRemain(-1), _raiseTries(0)
     {
         _userSid[0] = 0;
         InterlockedIncrement(&g_dllRef);
@@ -544,12 +722,17 @@ public:
         {
             fd->cpft = CPFT_LARGE_TEXT;
             fd->guidFieldType = CPFG_CREDENTIAL_PROVIDER_LABEL;
-            SHStrDupW(L"UnlockServer", &fd->pszLabel);
+            SHStrDupW(L"蓝牙解锁", &fd->pszLabel);
+        }
+        else if (i == FID_CANCEL)
+        {
+            fd->cpft = CPFT_COMMAND_LINK;
+            SHStrDupW(L"取消本次解锁", &fd->pszLabel);
         }
         else
         {
             fd->cpft = CPFT_SMALL_TEXT;
-            SHStrDupW(L"Status", &fd->pszLabel);
+            SHStrDupW(L"状态", &fd->pszLabel);
         }
         *ppcpfd = fd;
         return S_OK;
@@ -621,8 +804,45 @@ private:
         {
             DWORD w = WaitForMultipleObjects(pulse ? 2 : 1, waits, FALSE, 400);
             if (w == WAIT_OBJECT_0) break;
-            if (self->_events && IsUnlockRequested())
+
+            int remain = 0;
+            bool warn = GetWarnRemain(&remain);
+            bool unlockReq = IsUnlockRequested();
+
+            if (warn && !self->_warnActive)
             {
+                self->_warnActive = true;
+                self->_raiseTries = 0;
+                if (self->_events)
+                    self->_events->CredentialsChanged(self->_upAdvise);
+                DismissLockWallpaper();
+                if (self->_cred)
+                    self->_cred->RefreshWarnUi();
+                ProvLog("pending unlock, dismissed lock wallpaper");
+            }
+            else if (warn)
+            {
+                if (self->_raiseTries < 4)
+                {
+                    self->_raiseTries++;
+                    DismissLockWallpaper();
+                }
+                if (self->_cred && remain != self->_lastRemain)
+                    self->_cred->RefreshWarnUi();
+            }
+            else if (!warn && self->_warnActive)
+            {
+                self->_warnActive = false;
+                self->_raiseTries = 0;
+                if (self->_cred)
+                    self->_cred->RefreshWarnUi();
+            }
+
+            self->_lastRemain = remain;
+
+            if (unlockReq && self->_events)
+            {
+                DismissLockWallpaper();
                 ProvLog("CredentialsChanged");
                 self->_events->CredentialsChanged(self->_upAdvise);
             }
@@ -639,6 +859,9 @@ private:
     HANDLE _stop;
     HANDLE _thread;
     wchar_t _userSid[128];
+    bool _warnActive;
+    int _lastRemain;
+    int _raiseTries;
 };
 
 class ClassFactory : public IClassFactory

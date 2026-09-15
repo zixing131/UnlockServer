@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -26,6 +27,9 @@ namespace UnlockServer
         public int presenceTimeout = 8;
         public bool requireAllDevices;
         public bool useLocalUnlock = true;
+        public int actionWarnSeconds = 10;
+        public bool lockOnlyWhenIdle = true;
+        public int idleLockSeconds = 30;
 
         public Action<string, bool> UpdategRssi;
         public Action<string, short, bool, string> UpdateDevicePresence;
@@ -65,6 +69,12 @@ namespace UnlockServer
         private const int ScanOutageGraceSeconds = 40;
         private DateTime _lastSoftwareLockTime = DateTime.MinValue;
         private DateTime _suppressLockUntil = DateTime.MinValue;
+        private enum PendingKind { None, Lock, Unlock }
+        private PendingKind _pending = PendingKind.None;
+        private DateTime _pendingUntil = DateTime.MinValue;
+        private bool _userCancelledLock;
+        private bool _userCancelledUnlock;
+        private ActionToast _actionToast;
 
         public static bool IsValidBluetoothAddress(string address)
         {
@@ -155,25 +165,30 @@ namespace UnlockServer
         public void Stop()
         {
             isrunning = false;
+            DismissPending();
             sessionSwitchClass?.Close();
             _bluetooth?.RemoveScanUser();
             LogHelper.WriteLine("解锁监控已停止");
         }
 
         public void ApplyRuntimeSettings(int threshold, int hysteresis, int timeout, int lockSec, int unlockSec,
-            bool autoLock, bool autoUnlock, bool manualLock, bool manualUnlock, bool requireAll, bool localUnlock)
+            int warnSec, bool autoLock, bool autoUnlock, bool manualLock, bool manualUnlock, bool requireAll, bool localUnlock,
+            bool onlyIdle, int idleSec)
         {
             rssiyuzhi = threshold;
             hysteresisDb = hysteresis < 0 ? 0 : hysteresis;
             presenceTimeout = timeout;
             lockDelay = lockSec;
             unlockDelay = unlockSec;
+            actionWarnSeconds = warnSec < 0 ? 0 : warnSec;
             isautolock = autoLock;
             isautounlock = autoUnlock;
             manuallock = manualLock;
             manualunlock = manualUnlock;
             requireAllDevices = requireAll;
             useLocalUnlock = localUnlock;
+            lockOnlyWhenIdle = onlyIdle;
+            idleLockSeconds = idleSec < 1 ? 1 : idleSec;
         }
 
         private int ResolveScanType()
@@ -246,19 +261,19 @@ namespace UnlockServer
                             real = found.Rssi > -100 && found.LastSeen != DateTime.MinValue;
                         }
                         inRange = true;
-                        status = real && rssi > -100 ? $"{rssi} dBm" : "已连接";
+                        status = real && rssi > -100 ? $"{rssi} dBm · 已连接" : "已连接";
                     }
                     else if (found == null)
                     {
                         if (holdPresence && _inRangeByAddress.TryGetValue(bound.Address, out var prevMissing))
                         {
                             inRange = prevMissing;
-                            status = islocked ? "锁屏保持" : "扫描恢复中";
+                            status = islocked ? "锁屏中" : "正在寻找";
                         }
                         else
                         {
                             inRange = false;
-                            status = "未发现";
+                            status = "不在附近";
                         }
                     }
                     else if (found.LastSeen == DateTime.MinValue && found.Rssi <= -100)
@@ -266,32 +281,31 @@ namespace UnlockServer
                         if (holdPresence && _inRangeByAddress.TryGetValue(bound.Address, out var prevWait))
                         {
                             inRange = prevWait;
-                            status = "扫描恢复中";
+                            status = "正在寻找";
                         }
                         else
                         {
                             inRange = false;
-                            status = "等待信号";
+                            status = "正在寻找";
                         }
                     }
                     else
                     {
                         rssi = found.Rssi;
                         real = rssi > -100 && found.LastSeen != DateTime.MinValue;
-                        var freshWindow = Math.Max(presenceTimeout, 30);
                         var stale = found.LastSeen == DateTime.MinValue ||
-                                    (DateTime.Now - found.LastSeen).TotalSeconds > freshWindow;
+                                    (DateTime.Now - found.LastSeen).TotalSeconds > Math.Max(presenceTimeout, 8);
                         if (stale)
                         {
                             if (holdPresence && _inRangeByAddress.TryGetValue(bound.Address, out var prevStale))
                             {
                                 inRange = prevStale;
-                                status = islocked ? (rssi > -100 ? $"{rssi} dBm · 锁屏保持" : "锁屏保持") : "扫描恢复中";
+                                status = islocked ? "锁屏中" : "正在寻找";
                             }
                             else
                             {
                                 inRange = false;
-                                status = "信号超时";
+                                status = "已离开";
                             }
                         }
                         else
@@ -315,12 +329,8 @@ namespace UnlockServer
                 bool isInRange = requireAllDevices ? inRangeCount == enabled.Count : inRangeCount > 0;
                 _combinedInRange = isInRange;
 
-                if (!scanHealthy)
-                    UpdategRssi?.Invoke($"扫描恢复中  ·  {inRangeCount}/{enabled.Count}", isInRange);
-                else if (isInRange && bestRssi > -100)
-                    UpdategRssi?.Invoke($"{inRangeCount}/{enabled.Count}  ·  {bestRssi} dBm", true);
-                else
-                    UpdategRssi?.Invoke(isInRange ? $"✓ {inRangeCount}/{enabled.Count} 在范围内" : $"✗ {inRangeCount}/{enabled.Count} 在范围内", false);
+                var title = BuildPresenceSummary(enabled, inRangeCount, bestRssi, isInRange);
+                UpdategRssi?.Invoke(title, isInRange);
 
                 var shouldLog = (DateTime.Now - _lastTickLog).TotalSeconds >= 15;
                 if (shouldLog)
@@ -337,9 +347,26 @@ namespace UnlockServer
                 if (_unlockTestRunning)
                     return;
 
+                if (LocalUnlock.ConsumeUnlockCancel())
+                {
+                    if (_pending == PendingKind.Unlock)
+                    {
+                        UserCancelPending();
+                        return;
+                    }
+                }
+                if (_pending != PendingKind.None && DateTime.Now >= _pendingUntil)
+                {
+                    ExecutePending(_pending);
+                    return;
+                }
+
                 if (isInRange)
                 {
                     _deviceLeftTime = null;
+                    _userCancelledLock = false;
+                    if (_pending == PendingKind.Lock)
+                        DismissPending();
                     if (_deviceEnteredTime == null)
                     {
                         _deviceEnteredTime = DateTime.Now;
@@ -354,15 +381,22 @@ namespace UnlockServer
                             return;
                         }
 
+                        if (_userCancelledUnlock)
+                        {
+                            if (shouldLog) LogHelper.WriteLine("用户已取消本次解锁");
+                            return;
+                        }
+
                         var timeInRange = DateTime.Now - _deviceEnteredTime.Value;
                         if (timeInRange >= UnlockDelayTime &&
                             (DateTime.Now - lastUnLockTime) >= UnlockCooldown)
                         {
-                            LogHelper.WriteLine("执行解锁");
-                            sessionSwitchClass.dounlocking = true;
-                            sessionSwitchClass.isLockBySoft = false;
-                            if (!DoUnlock()) isunlockfail = true;
+                            RequestAction(PendingKind.Unlock);
                         }
+                    }
+                    else if (_pending == PendingKind.Unlock)
+                    {
+                        DismissPending();
                     }
                 }
                 else if (!scanHealthy)
@@ -372,6 +406,9 @@ namespace UnlockServer
                 else
                 {
                     _deviceEnteredTime = null;
+                    _userCancelledUnlock = false;
+                    if (_pending == PendingKind.Unlock)
+                        DismissPending();
                     if (_deviceLeftTime == null)
                     {
                         _deviceLeftTime = DateTime.Now;
@@ -392,18 +429,53 @@ namespace UnlockServer
                             return;
                         }
 
+                        if (_userCancelledLock)
+                        {
+                            if (shouldLog) LogHelper.WriteLine("用户已取消本次锁屏");
+                            return;
+                        }
+
+                        if (lockOnlyWhenIdle && GetIdleSeconds() < idleLockSeconds)
+                        {
+                            if (_pending == PendingKind.Lock)
+                                DismissPending();
+                            if (shouldLog) LogHelper.WriteLine("电脑仍在使用，暂不锁屏");
+                            return;
+                        }
+
                         var timeOutOfRange = DateTime.Now - _deviceLeftTime.Value;
                         if (timeOutOfRange >= LockDelayTime &&
                             (DateTime.Now - lastLockTime) >= LockCooldown)
                         {
-                            LogHelper.WriteLine("执行锁屏");
-                            sessionSwitchClass.dolocking = true;
-                            sessionSwitchClass.isLockBySoft = true;
-                            DoLock();
+                            RequestAction(PendingKind.Lock);
                         }
+                    }
+                    else if (_pending == PendingKind.Lock)
+                    {
+                        DismissPending();
                     }
                 }
             }
+        }
+
+        private string BuildPresenceSummary(List<BoundDevice> enabled, int inRangeCount, short bestRssi, bool isInRange)
+        {
+            if (_bluetooth != null && _bluetooth.LooksLikeScanStall())
+                return "正在重新寻找设备";
+
+            if (enabled.Count == 1)
+            {
+                var name = string.IsNullOrWhiteSpace(enabled[0].DisplayName) ? "设备" : enabled[0].DisplayName;
+                if (isInRange)
+                    return bestRssi > -100 ? $"{name} 在附近  ·  {bestRssi} dBm" : $"{name} 在附近";
+                return $"{name} 不在附近";
+            }
+
+            if (isInRange)
+                return bestRssi > -100
+                    ? $"{inRangeCount}/{enabled.Count} 台在附近  ·  {bestRssi} dBm"
+                    : $"{inRangeCount}/{enabled.Count} 台在附近";
+            return "设备不在附近";
         }
 
         private bool ApplyHysteresis(string address, short rssi, bool hasRealRssi, bool presenceFlag, bool previous)
@@ -435,6 +507,143 @@ namespace UnlockServer
         {
             _lastSoftwareLockTime = DateTime.Now;
             lastLockTime = DateTime.Now;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct LastInputInfo
+        {
+            public uint Size;
+            public uint Time;
+        }
+
+        [DllImport("user32.dll")]
+        private static extern bool GetLastInputInfo(ref LastInputInfo plii);
+
+        private static int GetIdleSeconds()
+        {
+            var info = new LastInputInfo { Size = (uint)Marshal.SizeOf(typeof(LastInputInfo)) };
+            if (!GetLastInputInfo(ref info))
+                return 0;
+            var idle = unchecked(Environment.TickCount - (int)info.Time);
+            return idle < 0 ? 0 : idle / 1000;
+        }
+
+        private void RequestAction(PendingKind kind)
+        {
+            if (_pending == kind) return;
+            if (_pending != PendingKind.None)
+                DismissPending();
+
+            if (actionWarnSeconds <= 0)
+            {
+                ExecuteAction(kind);
+                return;
+            }
+
+            _pending = kind;
+            _pendingUntil = DateTime.Now.AddSeconds(actionWarnSeconds);
+            var title = kind == PendingKind.Lock ? "即将锁屏" : "即将解锁";
+            LogHelper.WriteLine($"{title}，{actionWarnSeconds} 秒内可取消");
+
+            bool locked = (sessionSwitchClass != null && sessionSwitchClass.IsLocked)
+                || WanClient.IsSessionLocked();
+            if (kind == PendingKind.Unlock)
+                LocalUnlock.WriteUnlockWarn(actionWarnSeconds);
+
+            if (kind == PendingKind.Unlock && locked)
+                return;
+
+            Application.Current?.Dispatcher?.BeginInvoke(new Action(() =>
+            {
+                lock (lockLock)
+                {
+                    if (_pending != kind) return;
+                    _actionToast?.Dismiss();
+                    _actionToast = ToastService.ShowAction(
+                        title,
+                        "点击这条提示可取消本次操作",
+                        actionWarnSeconds,
+                        () =>
+                        {
+                            lock (lockLock) UserCancelPending();
+                        },
+                        () =>
+                        {
+                            lock (lockLock) ExecutePending(kind);
+                        });
+                }
+            }));
+        }
+
+        private void ExecutePending(PendingKind kind)
+        {
+            if (_pending != kind) return;
+            _pending = PendingKind.None;
+            _pendingUntil = DateTime.MinValue;
+            _actionToast = null;
+            LocalUnlock.ClearUnlockWarn();
+            ExecuteAction(kind);
+        }
+
+        private void ExecuteAction(PendingKind kind)
+        {
+            if (kind == PendingKind.Lock)
+            {
+                LogHelper.WriteLine("执行锁屏");
+                if (sessionSwitchClass != null)
+                {
+                    sessionSwitchClass.dolocking = true;
+                    sessionSwitchClass.isLockBySoft = true;
+                }
+                DoLock();
+            }
+            else if (kind == PendingKind.Unlock)
+            {
+                LogHelper.WriteLine("执行解锁");
+                if (sessionSwitchClass != null)
+                {
+                    sessionSwitchClass.dounlocking = true;
+                    sessionSwitchClass.isLockBySoft = false;
+                }
+                if (!DoUnlock()) isunlockfail = true;
+            }
+        }
+
+        private void UserCancelPending()
+        {
+            if (_pending == PendingKind.None) return;
+            var kind = _pending;
+            _pending = PendingKind.None;
+            _pendingUntil = DateTime.MinValue;
+            _actionToast = null;
+            LocalUnlock.ClearUnlockWarn();
+            if (kind == PendingKind.Lock)
+            {
+                _userCancelledLock = true;
+                lastLockTime = DateTime.Now;
+                LogHelper.WriteLine("用户取消本次锁屏");
+                Application.Current?.Dispatcher?.BeginInvoke(new Action(() =>
+                    ToastService.Show("已取消本次锁屏")));
+            }
+            else
+            {
+                _userCancelledUnlock = true;
+                lastUnLockTime = DateTime.Now;
+                LogHelper.WriteLine("用户取消本次解锁");
+                Application.Current?.Dispatcher?.BeginInvoke(new Action(() =>
+                    ToastService.Show("已取消本次解锁")));
+            }
+        }
+
+        private void DismissPending()
+        {
+            if (_pending == PendingKind.None && _actionToast == null) return;
+            _pending = PendingKind.None;
+            _pendingUntil = DateTime.MinValue;
+            var toast = _actionToast;
+            _actionToast = null;
+            LocalUnlock.ClearUnlockWarn();
+            Application.Current?.Dispatcher?.BeginInvoke(new Action(() => toast?.Dismiss()));
         }
 
         private void DoLock()

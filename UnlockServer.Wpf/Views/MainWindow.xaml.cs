@@ -19,6 +19,7 @@ namespace UnlockServer.Views
         private readonly MainViewModel _viewModel;
         private NotifyIcon _notifyIcon;
         private bool _isExiting;
+        private bool _trayTipShown;
 
         public MainWindow()
         {
@@ -97,6 +98,14 @@ namespace UnlockServer.Views
             _notifyIcon.ContextMenuStrip = contextMenu;
         }
 
+        private void HideToTray()
+        {
+            Hide();
+            if (_trayTipShown) return;
+            _trayTipShown = true;
+            ToastService.Show("已放到托盘，双击图标可打开");
+        }
+
         private void ShowMainWindow()
         {
             Show();
@@ -117,9 +126,8 @@ namespace UnlockServer.Views
             }
             else
             {
-                // 最小化到托盘
                 e.Cancel = true;
-                Hide();
+                HideToTray();
             }
         }
 
@@ -148,7 +156,7 @@ namespace UnlockServer.Views
 
         private void MinimizeButton_Click(object sender, RoutedEventArgs e)
         {
-            WindowState = WindowState.Minimized;
+            HideToTray();
         }
 
         private void CloseButton_Click(object sender, RoutedEventArgs e)

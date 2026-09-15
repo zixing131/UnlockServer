@@ -6,7 +6,7 @@
         xmlns:converters="clr-namespace:UnlockServer.Converters"
         mc:Ignorable="d"
         Title="搜索蓝牙设备" 
-        Height="760" Width="420" 
+        Height="640" Width="460" 
         WindowStartupLocation="CenterOwner"
         Background="Transparent"
         AllowsTransparency="True"

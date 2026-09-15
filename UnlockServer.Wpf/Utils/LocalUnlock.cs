@@ -27,6 +27,8 @@ namespace UnlockServer
 
         public static string CredPath => Path.Combine(DataDir, "local.cred");
         public static string RequestPath => Path.Combine(DataDir, "unlock.req");
+        public static string WarnPath => Path.Combine(DataDir, "unlock.warn");
+        public static string CancelPath => Path.Combine(DataDir, "unlock.cancel");
         public static string ProviderDllName = "UnlockServer.Provider.dll";
 
         public static bool IsAdministrator()
@@ -166,6 +168,38 @@ namespace UnlockServer
             catch { }
         }
 
+        public static void WriteUnlockWarn(int seconds)
+        {
+            try
+            {
+                Directory.CreateDirectory(DataDir);
+                var expiry = DateTime.UtcNow.AddSeconds(seconds > 0 ? seconds : 1).Ticks;
+                File.WriteAllText(WarnPath, expiry.ToString(), Encoding.ASCII);
+                TryDeleteFile(CancelPath);
+                Pulse();
+            }
+            catch (Exception ex)
+            {
+                LogHelper.WriteLine($"写入解锁提示失败: {ex.Message}");
+            }
+        }
+
+        public static void ClearUnlockWarn()
+        {
+            TryDeleteFile(WarnPath);
+            Pulse();
+        }
+
+        public static bool ConsumeUnlockCancel()
+        {
+            if (!File.Exists(CancelPath))
+                return false;
+            TryDeleteFile(CancelPath);
+            TryDeleteFile(WarnPath);
+            Pulse();
+            return true;
+        }
+
         public static bool RequestUnlock()
         {
             try
@@ -296,6 +330,8 @@ namespace UnlockServer
                 RemoveLegacyProviderKey();
                 TryDeleteFile(CredPath);
                 TryDeleteFile(RequestPath);
+                TryDeleteFile(WarnPath);
+                TryDeleteFile(CancelPath);
                 TryDeleteFile(Path.Combine(DataDir, "provider.log"));
 
                 var dest = GetSecureDllPath();

@@ -85,6 +85,26 @@ namespace UnlockServer.ViewModels
 
         public bool HasNoDevices => BoundDevices.Count == 0;
 
+        public bool HasMultipleDevices => BoundDevices.Count > 1;
+
+        public string InstallButtonText => LocalUnlock.IsProviderRegistered() ? "更新密码" : "启用本机解锁";
+
+        public string SetupHint
+        {
+            get
+            {
+                if (BoundDevices.Count == 0)
+                    return "下一步：添加手机、手表或鼠标，靠近时解锁，离开时锁屏。";
+                if (!LocalUnlock.CanUnlock())
+                    return "下一步：到「解锁」页填写 Windows 登录密码（不是 PIN），再点启用。";
+                if (!Settings.AutoLock && !Settings.AutoUnlock)
+                    return "下一步：到「规则」页打开自动锁屏或自动解锁。";
+                return "";
+            }
+        }
+
+        public bool HasSetupHint => !string.IsNullOrEmpty(SetupHint);
+
         public string LocalUnlockStatus
         {
             get => _localUnlockStatus;
@@ -184,6 +204,7 @@ namespace UnlockServer.ViewModels
 
                 ApplySettingsToManager();
                 RefreshLocalUnlockStatus();
+                RefreshSetupHint();
             }
             catch (Exception ex)
             {
@@ -331,6 +352,7 @@ namespace UnlockServer.ViewModels
                     DetachDevice(d);
             }
             OnPropertyChanged(nameof(HasNoDevices));
+            RefreshSetupHint();
         }
 
         private void AttachDevice(BoundDevice device)
@@ -395,6 +417,16 @@ namespace UnlockServer.ViewModels
             Settings.Devices = BoundDevices.ToList();
             _configService.SaveSettings(Settings);
             SyncBoundDevicesToManager(true);
+            if (!IsMonitoring)
+                StartMonitoring();
+            RefreshSetupHint();
+
+            if (!LocalUnlock.CanUnlock())
+                ToastService.Show("已添加设备。请到「解锁」页填写 Windows 密码并启用本机解锁。");
+            else if (!Settings.AutoLock && !Settings.AutoUnlock)
+                ToastService.Show("已添加设备。可到「规则」页打开自动锁屏/解锁。");
+            else
+                ToastService.Show("已添加设备，正在监控。");
         }
 
         private void LockScreen(object parameter)
@@ -418,8 +450,20 @@ namespace UnlockServer.ViewModels
 
         private void ToggleMonitoring(object parameter)
         {
-            if (IsMonitoring) StopMonitoring();
-            else StartMonitoring();
+            if (IsMonitoring)
+            {
+                StopMonitoring();
+                return;
+            }
+
+            if (BoundDevices.Count == 0)
+            {
+                SelectedTab = 0;
+                MessageDialog.ShowWarning("请先添加一台蓝牙设备，再开始监控。");
+                return;
+            }
+
+            StartMonitoring();
         }
 
         private void ShowWindow(object parameter) => OnRequestShowWindow?.Invoke(this, EventArgs.Empty);
@@ -433,7 +477,18 @@ namespace UnlockServer.ViewModels
             }
         }
 
-        public void Initialize() => StartMonitoring();
+        public void Initialize()
+        {
+            if (BoundDevices.Count > 0)
+                StartMonitoring();
+            else
+            {
+                StatusText = "待设置";
+                CurrentRssi = "请先添加设备";
+                IsDeviceInRange = false;
+            }
+            RefreshSetupHint();
+        }
 
         public void Cleanup() => StopMonitoring();
 
@@ -452,6 +507,9 @@ namespace UnlockServer.ViewModels
                     manualunlock = Settings.ManualUnlock,
                     lockDelay = Settings.LockDelay,
                     unlockDelay = Settings.UnlockDelay,
+                    actionWarnSeconds = Settings.ActionWarnSeconds,
+                    lockOnlyWhenIdle = Settings.LockOnlyWhenIdle,
+                    idleLockSeconds = Settings.IdleLockSeconds,
                     requireAllDevices = Settings.RequireAllDevices,
                     useLocalUnlock = Settings.UseLocalUnlock
                 };
@@ -513,12 +571,12 @@ namespace UnlockServer.ViewModels
             }
         }
 
-        private void UpdateRssiDisplay(string displayText, bool isRealRssi)
+        private void UpdateRssiDisplay(string displayText, bool inRange)
         {
             Application.Current?.Dispatcher?.Invoke(() =>
             {
                 CurrentRssi = displayText;
-                IsDeviceInRange = displayText.Contains("✓") || displayText.Contains("dBm");
+                IsDeviceInRange = inRange;
             });
         }
 
@@ -544,12 +602,15 @@ namespace UnlockServer.ViewModels
                 Settings.PresenceTimeout,
                 Settings.LockDelay,
                 Settings.UnlockDelay,
+                Settings.ActionWarnSeconds,
                 Settings.AutoLock,
                 Settings.AutoUnlock,
                 Settings.ManualLock,
                 Settings.ManualUnlock,
                 Settings.RequireAllDevices,
-                Settings.UseLocalUnlock);
+                Settings.UseLocalUnlock,
+                Settings.LockOnlyWhenIdle,
+                Settings.IdleLockSeconds);
             SyncBoundDevicesToManager(false);
         }
 
@@ -559,7 +620,16 @@ namespace UnlockServer.ViewModels
             OnPropertyChanged(nameof(IsLocalUnlockReady));
             OnPropertyChanged(nameof(CanUninstallLocalUnlock));
             OnPropertyChanged(nameof(CanTestUnlock));
+            OnPropertyChanged(nameof(InstallButtonText));
             (TestUnlockCommand as RelayCommand)?.RaiseCanExecuteChanged();
+            RefreshSetupHint();
+        }
+
+        private void RefreshSetupHint()
+        {
+            OnPropertyChanged(nameof(SetupHint));
+            OnPropertyChanged(nameof(HasSetupHint));
+            OnPropertyChanged(nameof(HasMultipleDevices));
         }
 
         public event EventHandler<int> OnRequestSearchDevice;
