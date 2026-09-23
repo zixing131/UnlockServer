@@ -19,6 +19,7 @@ namespace UnlockServer.Models
         private bool _autoUnlock = true;
         private bool _manualLock = true;
         private bool _manualUnlock = false;
+        private bool _lockWhenSeen;
         private bool _autoStart = false;
         private int _lockDelay = 15;
         private int _unlockDelay = 3;
@@ -128,6 +129,15 @@ namespace UnlockServer.Models
         {
             get => _manualUnlock;
             set => SetProperty(ref _manualUnlock, value);
+        }
+
+        /// <summary>
+        /// 开启「不干预手动解锁」后，只要这次解锁期间看到过蓝牙，信号断开仍自动锁屏。
+        /// </summary>
+        public bool LockWhenSeen
+        {
+            get => _lockWhenSeen;
+            set => SetProperty(ref _lockWhenSeen, value);
         }
 
         /// <summary>

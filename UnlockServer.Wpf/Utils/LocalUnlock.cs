@@ -29,6 +29,8 @@ namespace UnlockServer
         public static string RequestPath => Path.Combine(DataDir, "unlock.req");
         public static string WarnPath => Path.Combine(DataDir, "unlock.warn");
         public static string CancelPath => Path.Combine(DataDir, "unlock.cancel");
+        public static string NowPath => Path.Combine(DataDir, "unlock.now");
+        public static string HintPath => Path.Combine(DataDir, "unlock.hint");
         public static string ProviderDllName = "UnlockServer.Provider.dll";
 
         public static bool IsAdministrator()
@@ -176,6 +178,7 @@ namespace UnlockServer
                 var expiry = DateTime.UtcNow.AddSeconds(seconds > 0 ? seconds : 1).Ticks;
                 File.WriteAllText(WarnPath, expiry.ToString(), Encoding.ASCII);
                 TryDeleteFile(CancelPath);
+                TryDeleteFile(HintPath);
                 Pulse();
             }
             catch (Exception ex)
@@ -198,6 +201,42 @@ namespace UnlockServer
             TryDeleteFile(WarnPath);
             Pulse();
             return true;
+        }
+
+        public static bool ConsumeUnlockNow()
+        {
+            if (!File.Exists(NowPath))
+                return false;
+            string raw = null;
+            try { raw = File.ReadAllText(NowPath).Trim(); }
+            catch { }
+            TryDeleteFile(NowPath);
+            if (!long.TryParse(raw, out var ticks))
+                return false;
+            var age = new TimeSpan(DateTime.UtcNow.Ticks - ticks);
+            return age.TotalSeconds >= 0 && age.TotalSeconds <= 20;
+        }
+
+        public static void WriteUnlockHint(string code)
+        {
+            try
+            {
+                Directory.CreateDirectory(DataDir);
+                File.WriteAllText(HintPath, code ?? "", Encoding.ASCII);
+                Pulse();
+            }
+            catch (Exception ex)
+            {
+                LogHelper.WriteLine($"写入解锁提示失败: {ex.Message}");
+            }
+        }
+
+        public static void ClearUnlockHint()
+        {
+            if (!File.Exists(HintPath))
+                return;
+            TryDeleteFile(HintPath);
+            Pulse();
         }
 
         public static bool RequestUnlock()
@@ -332,6 +371,8 @@ namespace UnlockServer
                 TryDeleteFile(RequestPath);
                 TryDeleteFile(WarnPath);
                 TryDeleteFile(CancelPath);
+                TryDeleteFile(NowPath);
+                TryDeleteFile(HintPath);
                 TryDeleteFile(Path.Combine(DataDir, "provider.log"));
 
                 var dest = GetSecureDllPath();

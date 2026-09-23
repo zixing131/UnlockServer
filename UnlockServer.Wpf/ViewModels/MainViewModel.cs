@@ -3,6 +3,7 @@ using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Linq;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
@@ -28,6 +29,16 @@ namespace UnlockServer.ViewModels
         private bool _suspendAutoSave;
 
         public ObservableCollection<BoundDevice> BoundDevices { get; } = new ObservableCollection<BoundDevice>();
+
+        public string AppVersion { get; } = FormatAppVersion();
+
+        public string WindowTitle => "蓝牙解锁 " + AppVersion;
+
+        private static string FormatAppVersion()
+        {
+            var version = Assembly.GetExecutingAssembly().GetName().Version;
+            return version == null ? "" : "v" + version.ToString(3);
+        }
 
         public AppSettings Settings
         {
@@ -327,11 +338,20 @@ namespace UnlockServer.ViewModels
                 }
 
                 StatusText = "解锁测试中";
+                _unlockManager.UnlockTestFinished = OnUnlockTestFinished;
             }
             catch (Exception ex)
             {
                 MessageDialog.ShowError("无法开始解锁测试: " + ex.Message);
             }
+        }
+
+        private void OnUnlockTestFinished(bool ok)
+        {
+            if (IsMonitoring)
+                StatusText = "监控中";
+            else
+                StatusText = ok ? "就绪" : "已锁定";
         }
 
         private void SearchDevice(object parameter)
@@ -505,6 +525,7 @@ namespace UnlockServer.ViewModels
                     isautounlock = Settings.AutoUnlock,
                     manuallock = Settings.ManualLock,
                     manualunlock = Settings.ManualUnlock,
+                    lockWhenSeen = Settings.LockWhenSeen,
                     lockDelay = Settings.LockDelay,
                     unlockDelay = Settings.UnlockDelay,
                     actionWarnSeconds = Settings.ActionWarnSeconds,
@@ -516,6 +537,7 @@ namespace UnlockServer.ViewModels
                 _unlockManager.SetBoundDevices(BoundDevices);
                 _unlockManager.UpdategRssi = UpdateRssiDisplay;
                 _unlockManager.UpdateDevicePresence = UpdateDevicePresence;
+                _unlockManager.UnlockTestFinished = OnUnlockTestFinished;
             }
             catch (Exception ex)
             {
@@ -610,7 +632,8 @@ namespace UnlockServer.ViewModels
                 Settings.RequireAllDevices,
                 Settings.UseLocalUnlock,
                 Settings.LockOnlyWhenIdle,
-                Settings.IdleLockSeconds);
+                Settings.IdleLockSeconds,
+                Settings.LockWhenSeen);
             SyncBoundDevicesToManager(false);
         }
 

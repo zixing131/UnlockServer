@@ -33,9 +33,11 @@ static const wchar_t kCredPath[] = L"C:\\ProgramData\\UnlockServer\\local.cred";
 static const wchar_t kReqPath[] = L"C:\\ProgramData\\UnlockServer\\unlock.req";
 static const wchar_t kWarnPath[] = L"C:\\ProgramData\\UnlockServer\\unlock.warn";
 static const wchar_t kCancelPath[] = L"C:\\ProgramData\\UnlockServer\\unlock.cancel";
+static const wchar_t kNowPath[] = L"C:\\ProgramData\\UnlockServer\\unlock.now";
+static const wchar_t kHintPath[] = L"C:\\ProgramData\\UnlockServer\\unlock.hint";
 static const wchar_t kLogPath[] = L"C:\\ProgramData\\UnlockServer\\provider.log";
 
-enum FieldId { FID_TILE = 0, FID_TITLE = 1, FID_SUBTITLE = 2, FID_CANCEL = 3, FID_COUNT = 4 };
+enum FieldId { FID_TILE = 0, FID_TITLE = 1, FID_SUBTITLE = 2, FID_UNLOCK_NOW = 3, FID_CANCEL = 4, FID_COUNT = 5 };
 
 static HBITMAP CreateTileBitmap()
 {
@@ -267,6 +269,39 @@ static void DismissLockWallpaper()
     ProvLog("DismissLockWallpaper");
 }
 
+static void PulseUnlock()
+{
+    HANDLE h = CreatePulseEvent();
+    if (!h) return;
+    SetEvent(h);
+    CloseHandle(h);
+}
+
+static const wchar_t* HintText()
+{
+    char raw[32] = {};
+    if (!ReadUtf8File(kHintPath, raw, sizeof(raw))) return nullptr;
+    if (raw[0] == 'a' && raw[1] == 'w' && raw[2] == 'a' && raw[3] == 'y')
+        return L"设备不在附近";
+    if (raw[0] == 'f' && raw[1] == 'a' && raw[2] == 'i' && raw[3] == 'l')
+        return L"解锁失败";
+    return nullptr;
+}
+
+static void WriteNowFile()
+{
+    DeleteFileW(kHintPath);
+    HANDLE h = CreateFileW(kNowPath, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+        nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return;
+    char line[32] = {};
+    int n = sprintf_s(line, "%llu", NowDotNetTicks());
+    DWORD w = 0;
+    if (n > 0) WriteFile(h, line, (DWORD)n, &w, nullptr);
+    CloseHandle(h);
+    PulseUnlock();
+}
+
 static void WriteCancelFile()
 {
     HANDLE h = CreateFileW(kCancelPath, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
@@ -450,8 +485,12 @@ public:
         else
             StringCchCopyW(title, 96, L"蓝牙解锁");
         _events->SetFieldString(this, FID_TITLE, title);
-        _events->SetFieldString(this, FID_SUBTITLE,
-            warn ? L"点下面「取消本次解锁」可停止" : L"设备靠近时自动解锁");
+        const wchar_t* hint = HintText();
+        if (hint)
+            _events->SetFieldString(this, FID_SUBTITLE, hint);
+        else
+            _events->SetFieldString(this, FID_SUBTITLE,
+                warn ? L"点下面「取消本次解锁」可停止" : L"点「点击解锁」，设备在旁边即可解开");
     }
 
     IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv)
@@ -499,7 +538,7 @@ public:
         bool warn = GetWarnRemain(&remain);
         if (fid == FID_TILE || fid == FID_TITLE)
             *pfs = CPFS_DISPLAY_IN_BOTH;
-        else if (fid == FID_CANCEL)
+        else if (fid == FID_CANCEL || fid == FID_UNLOCK_NOW)
             *pfs = CPFS_DISPLAY_IN_SELECTED_TILE;
         else
             *pfs = CPFS_DISPLAY_IN_SELECTED_TILE;
@@ -523,7 +562,15 @@ public:
         }
         else if (fid == FID_SUBTITLE)
         {
-            text = warn ? L"点下面「取消本次解锁」可停止" : L"设备靠近时自动解锁";
+            const wchar_t* hint = HintText();
+            if (hint)
+                text = hint;
+            else
+                text = warn ? L"点下面「取消本次解锁」可停止" : L"点「点击解锁」，设备在旁边即可解开";
+        }
+        else if (fid == FID_UNLOCK_NOW)
+        {
+            text = L"点击解锁";
         }
         else if (fid == FID_CANCEL)
         {
@@ -548,6 +595,17 @@ public:
     IFACEMETHODIMP SetComboBoxSelectedValue(DWORD, DWORD) { return E_NOTIMPL; }
     IFACEMETHODIMP CommandLinkClicked(DWORD fid)
     {
+        if (fid == FID_UNLOCK_NOW)
+        {
+            WriteNowFile();
+            ProvLog("user requested click unlock");
+            if (_events)
+            {
+                _events->SetFieldString(this, FID_TITLE, L"蓝牙解锁");
+                _events->SetFieldString(this, FID_SUBTITLE, L"正在确认设备");
+            }
+            return S_OK;
+        }
         if (fid != FID_CANCEL) return E_NOTIMPL;
         WriteCancelFile();
         ProvLog("user cancelled pending unlock");
@@ -639,7 +697,7 @@ class UnlockProvider : public ICredentialProvider, public ICredentialProviderSet
 {
 public:
     UnlockProvider() : _ref(1), _cpus(CPUS_INVALID), _events(nullptr), _upAdvise(0),
-        _cred(nullptr), _stop(nullptr), _thread(nullptr), _warnActive(false), _lastRemain(-1), _raiseTries(0)
+        _cred(nullptr), _stop(nullptr), _thread(nullptr), _warnActive(false), _lastRemain(-1), _hintCode(0)
     {
         _userSid[0] = 0;
         InterlockedIncrement(&g_dllRef);
@@ -723,6 +781,11 @@ public:
             fd->cpft = CPFT_LARGE_TEXT;
             fd->guidFieldType = CPFG_CREDENTIAL_PROVIDER_LABEL;
             SHStrDupW(L"蓝牙解锁", &fd->pszLabel);
+        }
+        else if (i == FID_UNLOCK_NOW)
+        {
+            fd->cpft = CPFT_COMMAND_LINK;
+            SHStrDupW(L"点击解锁", &fd->pszLabel);
         }
         else if (i == FID_CANCEL)
         {
@@ -812,30 +875,32 @@ private:
             if (warn && !self->_warnActive)
             {
                 self->_warnActive = true;
-                self->_raiseTries = 0;
                 if (self->_events)
                     self->_events->CredentialsChanged(self->_upAdvise);
-                DismissLockWallpaper();
                 if (self->_cred)
                     self->_cred->RefreshWarnUi();
-                ProvLog("pending unlock, dismissed lock wallpaper");
+                // 只滑一次，把锁屏壁纸划开，倒计时磁贴才能看见。
+                DismissLockWallpaper();
+                ProvLog("pending unlock, show countdown");
             }
             else if (warn)
             {
-                if (self->_raiseTries < 4)
-                {
-                    self->_raiseTries++;
-                    DismissLockWallpaper();
-                }
                 if (self->_cred && remain != self->_lastRemain)
                     self->_cred->RefreshWarnUi();
             }
             else if (!warn && self->_warnActive)
             {
                 self->_warnActive = false;
-                self->_raiseTries = 0;
                 if (self->_cred)
                     self->_cred->RefreshWarnUi();
+            }
+
+            const wchar_t* hint = HintText();
+            int hintCode = hint == nullptr ? 0 : (hint[0] == L'设' ? 1 : 2);
+            if (self->_cred && hintCode != self->_hintCode)
+            {
+                self->_hintCode = hintCode;
+                self->_cred->RefreshWarnUi();
             }
 
             self->_lastRemain = remain;
@@ -861,7 +926,7 @@ private:
     wchar_t _userSid[128];
     bool _warnActive;
     int _lastRemain;
-    int _raiseTries;
+    int _hintCode;
 };
 
 class ClassFactory : public IClassFactory

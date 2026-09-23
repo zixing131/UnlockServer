@@ -21,6 +21,7 @@ namespace UnlockServer
         public bool isautounlock;
         public bool manuallock = true;
         public bool manualunlock;
+        public bool lockWhenSeen;
         public int bletype;
         public int rssiyuzhi = -70;
         public int hysteresisDb = 8;
@@ -74,7 +75,9 @@ namespace UnlockServer
         private DateTime _pendingUntil = DateTime.MinValue;
         private bool _userCancelledLock;
         private bool _userCancelledUnlock;
+        private bool _seenNearbyAfterManualUnlock;
         private ActionToast _actionToast;
+        public Action<bool> UnlockTestFinished;
 
         public static bool IsValidBluetoothAddress(string address)
         {
@@ -126,9 +129,14 @@ namespace UnlockServer
                 _bluetooth = UnlockServer.Services.BluetoothService.Shared;
                 _bluetooth.BluetoothType = bletype;
                 _bluetooth.PinAddresses(_bound.Where(x => x.Enabled).Select(x => x.Address));
-                sessionSwitchClass.SessionLockAction = () => _bluetooth?.NotifySessionLocked();
+                sessionSwitchClass.SessionLockAction = () =>
+                {
+                    LocalUnlock.ClearUnlockHint();
+                    _bluetooth?.NotifySessionLocked();
+                };
                 sessionSwitchClass.SessionUnlockAction = () =>
                 {
+                    _seenNearbyAfterManualUnlock = false;
                     _bluetooth?.NotifySessionUnlocked();
                     HandleUserUnlockAfterSoftwareLock();
                 };
@@ -173,7 +181,7 @@ namespace UnlockServer
 
         public void ApplyRuntimeSettings(int threshold, int hysteresis, int timeout, int lockSec, int unlockSec,
             int warnSec, bool autoLock, bool autoUnlock, bool manualLock, bool manualUnlock, bool requireAll, bool localUnlock,
-            bool onlyIdle, int idleSec)
+            bool onlyIdle, int idleSec, bool relockWhenSeen)
         {
             rssiyuzhi = threshold;
             hysteresisDb = hysteresis < 0 ? 0 : hysteresis;
@@ -185,6 +193,7 @@ namespace UnlockServer
             isautounlock = autoUnlock;
             manuallock = manualLock;
             manualunlock = manualUnlock;
+            lockWhenSeen = relockWhenSeen;
             requireAllDevices = requireAll;
             useLocalUnlock = localUnlock;
             lockOnlyWhenIdle = onlyIdle;
@@ -235,6 +244,7 @@ namespace UnlockServer
                 bool scanHealthy = _bluetooth.IsAdvertisementAlive;
                 int scanSilence = _bluetooth.ScanSilenceSeconds;
                 int inRangeCount = 0;
+                int freshInRangeCount = 0;
                 short bestRssi = -100;
 
                 foreach (var bound in enabled)
@@ -252,6 +262,7 @@ namespace UnlockServer
                         || connected
                         || _bluetooth.IsRefreshing
                         || _bluetooth.LooksLikeScanStall();
+                    bool freshHere = false;
 
                     if (connected)
                     {
@@ -261,6 +272,7 @@ namespace UnlockServer
                             real = found.Rssi > -100 && found.LastSeen != DateTime.MinValue;
                         }
                         inRange = true;
+                        freshHere = true;
                         status = real && rssi > -100 ? $"{rssi} dBm · 已连接" : "已连接";
                     }
                     else if (found == null)
@@ -312,6 +324,7 @@ namespace UnlockServer
                         {
                             _inRangeByAddress.TryGetValue(bound.Address, out var prev);
                             inRange = ApplyHysteresis(bound.Address, rssi, real, rssi > -100, prev);
+                            freshHere = inRange;
                             status = real ? $"{rssi} dBm" : "在附近";
                         }
                     }
@@ -322,11 +335,13 @@ namespace UnlockServer
                         inRangeCount++;
                         if (rssi > bestRssi) bestRssi = rssi;
                     }
+                    if (freshHere) freshInRangeCount++;
 
                     UpdateDevicePresence?.Invoke(bound.Address, rssi, inRange, status);
                 }
 
                 bool isInRange = requireAllDevices ? inRangeCount == enabled.Count : inRangeCount > 0;
+                bool freshInRange = requireAllDevices ? freshInRangeCount == enabled.Count : freshInRangeCount > 0;
                 _combinedInRange = isInRange;
 
                 var title = BuildPresenceSummary(enabled, inRangeCount, bestRssi, isInRange);
@@ -341,10 +356,21 @@ namespace UnlockServer
                         : $"监控: 扫描暂无广播 {scanSilence}s，保持上次状态 {inRangeCount}/{enabled.Count}");
                 }
 
-                if (!isautolock && !isautounlock)
+                if (_unlockTestRunning)
                     return;
 
-                if (_unlockTestRunning)
+                bool clickHere = freshInRange || (isInRange && !scanHealthy);
+
+                if (freshInRange)
+                    LocalUnlock.ClearUnlockHint();
+
+                if (LocalUnlock.ConsumeUnlockNow())
+                {
+                    HandleClickUnlock(islocked, clickHere);
+                    return;
+                }
+
+                if (!isautolock && !isautounlock)
                     return;
 
                 if (LocalUnlock.ConsumeUnlockCancel())
@@ -363,6 +389,8 @@ namespace UnlockServer
 
                 if (isInRange)
                 {
+                    if (!islocked && freshInRange && sessionSwitchClass != null && !sessionSwitchClass.isUnlockBySoft)
+                        _seenNearbyAfterManualUnlock = true;
                     _deviceLeftTime = null;
                     _userCancelledLock = false;
                     if (_pending == PendingKind.Lock)
@@ -423,7 +451,8 @@ namespace UnlockServer
                             return;
                         }
 
-                        if (!sessionSwitchClass.isUnlockBySoft && manualunlock)
+                        if (!sessionSwitchClass.isUnlockBySoft && manualunlock &&
+                            !(lockWhenSeen && _seenNearbyAfterManualUnlock))
                         {
                             if (shouldLog) LogHelper.WriteLine("当前为人工解锁，已设置不干预");
                             return;
@@ -486,6 +515,38 @@ namespace UnlockServer
                 return rssi >= rssiyuzhi;
             if (previous) return rssi >= rssiyuzhi - half;
             return rssi >= rssiyuzhi + half;
+        }
+
+        private void HandleClickUnlock(bool islocked, bool deviceHere)
+        {
+            if (!islocked)
+            {
+                LocalUnlock.ClearUnlockHint();
+                return;
+            }
+
+            if (!deviceHere)
+            {
+                LogHelper.WriteLine("点击解锁：设备不在旁边");
+                LocalUnlock.WriteUnlockHint("away");
+                return;
+            }
+
+            LogHelper.WriteLine("点击解锁：设备在旁边，按自动解锁处理");
+            _userCancelledUnlock = false;
+            DismissPending();
+            if (sessionSwitchClass != null)
+            {
+                sessionSwitchClass.dounlocking = true;
+                sessionSwitchClass.isLockBySoft = false;
+            }
+            if (!DoUnlock())
+            {
+                if (sessionSwitchClass != null)
+                    sessionSwitchClass.dounlocking = false;
+                LogHelper.WriteLine("点击解锁失败");
+                LocalUnlock.WriteUnlockHint("fail");
+            }
         }
 
         private void HandleUserUnlockAfterSoftwareLock()
@@ -701,6 +762,7 @@ namespace UnlockServer
             var wait = delaySeconds > 0 ? delaySeconds : 5;
             Task.Run(() =>
             {
+                bool ok = false;
                 try
                 {
                     _bluetooth?.NotifySessionLocked();
@@ -709,7 +771,6 @@ namespace UnlockServer
                     sessionSwitchClass.dounlocking = true;
                     var prevLocal = useLocalUnlock;
                     useLocalUnlock = LocalUnlock.CanUnlock() || prevLocal;
-                    bool ok;
                     try { ok = DoUnlock(); }
                     finally { useLocalUnlock = prevLocal; }
                     LogHelper.WriteLine($"解锁测试结果: {ok}");
@@ -721,6 +782,15 @@ namespace UnlockServer
                 finally
                 {
                     _unlockTestRunning = false;
+                    var done = UnlockTestFinished;
+                    if (done != null)
+                    {
+                        var dispatcher = Application.Current?.Dispatcher;
+                        if (dispatcher != null && !dispatcher.CheckAccess())
+                            dispatcher.BeginInvoke(new Action(() => done(ok)));
+                        else
+                            done(ok);
+                    }
                 }
             });
             return true;

@@ -2,7 +2,7 @@
 
 用附近的蓝牙设备自动锁定 / 解锁 Windows 的小工具。
 
-WPF 版（v2.2）在 [`UnlockServer.Wpf`](UnlockServer.Wpf)：支持多设备、本机直接解锁（凭据提供程序），以及 BLE 广播近场检测。
+WPF 版（v2.3）在 [`UnlockServer.Wpf`](UnlockServer.Wpf)：支持多设备、本机直接解锁（凭据提供程序），以及 BLE 广播近场检测。
 
 Issue 整理与处理说明见 [`docs/issues.md`](docs/issues.md)。
 
@@ -41,6 +41,13 @@ Issue 整理与处理说明见 [`docs/issues.md`](docs/issues.md)。
 常见限制：部分设备配对后不再广播，或连着手机时电脑扫不到，需要解除与手机的连接后再试。
 
 ## 更新
+
+**v2.3**
+
+- 解锁倒计时只上滑一次，用来显示倒计时
+- 解锁测试结束后恢复顶部状态
+- 增加「有信号时仍锁屏」，以及锁屏上的「点击解锁」
+- 顶部显示程序集版本号
 
 **v2.2**
 

@@ -2,9 +2,9 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:converters="clr-namespace:UnlockServer.Converters"
-        Title="蓝牙解锁"
-        Height="660" Width="540"
-        MinHeight="660" MinWidth="540"
+        Title="{Binding WindowTitle}"
+        Height="700" Width="540"
+        MinHeight="700" MinWidth="540"
         WindowStartupLocation="CenterScreen"
         Background="Transparent"
         AllowsTransparency="True"
@@ -42,7 +42,11 @@
                                    HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Border>
                     <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                        <TextBlock Text="蓝牙解锁" FontSize="16" FontWeight="SemiBold" Foreground="{StaticResource TextPrimaryBrush}"/>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="蓝牙解锁" FontSize="16" FontWeight="SemiBold" Foreground="{StaticResource TextPrimaryBrush}"/>
+                            <TextBlock Text="{Binding AppVersion}" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"
+                                       Margin="8,4,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
                         <TextBlock Text="靠近解锁  ·  离开锁屏" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,2,0,0"/>
                     </StackPanel>
                     <StackPanel Grid.Column="2" Orientation="Horizontal">
@@ -373,13 +377,15 @@
                         </Grid.RowDefinitions>
 
                         <TextBlock Text="开关" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TextDisabledBrush}" Margin="2,0,0,8"/>
-                        <UniformGrid Grid.Row="1" Columns="2" Rows="3">
+                        <UniformGrid Grid.Row="1" Columns="2" Rows="4">
                             <CheckBox Content="离开后自动锁屏" Style="{StaticResource ToggleSwitchStyle}" IsChecked="{Binding Settings.AutoLock}" FontSize="12" Margin="0,0,12,8"/>
                             <CheckBox Content="靠近后自动解锁" Style="{StaticResource ToggleSwitchStyle}" IsChecked="{Binding Settings.AutoUnlock}" FontSize="12" Margin="0,0,0,8"/>
                             <CheckBox Content="开机后自动运行" Style="{StaticResource ToggleSwitchStyle}" IsChecked="{Binding Settings.AutoStart}" FontSize="12" Margin="0,0,12,8"/>
                             <CheckBox Content="不干预手动锁定" Style="{StaticResource ToggleSwitchStyle}" IsChecked="{Binding Settings.ManualLock}" FontSize="12" Margin="0,0,0,8"/>
-                            <CheckBox Content="不干预手动解锁" Style="{StaticResource ToggleSwitchStyle}" IsChecked="{Binding Settings.ManualUnlock}" FontSize="12" Margin="0,0,12,0"/>
-                            <CheckBox Content="空闲时才锁定" Style="{StaticResource ToggleSwitchStyle}" IsChecked="{Binding Settings.LockOnlyWhenIdle}" FontSize="12"/>
+                            <CheckBox Content="不干预手动解锁" Style="{StaticResource ToggleSwitchStyle}" IsChecked="{Binding Settings.ManualUnlock}" FontSize="12" Margin="0,0,12,8"/>
+                            <CheckBox Content="空闲时才锁定" Style="{StaticResource ToggleSwitchStyle}" IsChecked="{Binding Settings.LockOnlyWhenIdle}" FontSize="12" Margin="0,0,0,8"/>
+                            <CheckBox Content="有信号时仍锁屏" Style="{StaticResource ToggleSwitchStyle}" IsChecked="{Binding Settings.LockWhenSeen}" FontSize="12" Margin="0,0,12,0"
+                                      ToolTip="开启「不干预手动解锁」后，只要蓝牙曾经在旁边，信号断开仍会自动锁屏"/>
                         </UniformGrid>
 
                         <TextBlock Grid.Row="3" Text="时间与信号" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TextDisabledBrush}" Margin="2,0,0,8"/>

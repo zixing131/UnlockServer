@@ -43,6 +43,7 @@ namespace UnlockServer.Services
                 settings.AutoUnlock = OperateIniFile.ReadIniInt("setting", "autounlock", 1) == 1;
                 settings.ManualLock = OperateIniFile.ReadIniInt("setting", "manuallock", 1) == 1;
                 settings.ManualUnlock = OperateIniFile.ReadIniInt("setting", "manualunlock", 0) == 1;
+                settings.LockWhenSeen = OperateIniFile.ReadIniInt("setting", "lockwhenseen", 0) == 1;
 
                 // 读取延迟设置
                 settings.LockDelay = OperateIniFile.ReadIniInt("setting", "lockdelay", 15);
@@ -95,6 +96,7 @@ namespace UnlockServer.Services
                 OperateIniFile.WriteIniInt("setting", "autounlock", settings.AutoUnlock ? 1 : 0);
                 OperateIniFile.WriteIniInt("setting", "manuallock", settings.ManualLock ? 1 : 0);
                 OperateIniFile.WriteIniInt("setting", "manualunlock", settings.ManualUnlock ? 1 : 0);
+                OperateIniFile.WriteIniInt("setting", "lockwhenseen", settings.LockWhenSeen ? 1 : 0);
 
                 // 保存延迟设置
                 OperateIniFile.WriteIniInt("setting", "lockdelay", settings.LockDelay);
