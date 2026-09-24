@@ -4,3 +4,4 @@ obj
 packages
 UnlockServer.Provider/Debug/
 UnlockServer.Provider/Release/
+.DS_Store
