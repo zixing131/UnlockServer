@@ -44,8 +44,6 @@ namespace UnlockServer.Services
         private DeviceWatcher _leWatcher;
         private BluetoothLEAdvertisementWatcher _advWatcher;
         private readonly ConcurrentDictionary<string, BluetoothDeviceModel> _devices;
-        private readonly ConcurrentDictionary<string, short> _lastWatcherRssi =
-            new ConcurrentDictionary<string, short>(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, byte> _pinned =
             new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, BluetoothLEDevice> _heldLe =
@@ -58,16 +56,18 @@ namespace UnlockServer.Services
         private int _bluetoothType = 2;
         private bool _isDisposed;
         private int _scanUsers;
+        private int _discoveryUsers;
+        private int _watcherGeneration;
+        private int EffectiveBluetoothType => _discoveryUsers > 0 ? 0 : _bluetoothType;
         private DateTime _lastAdvertisement = DateTime.MinValue;
         private DateTime _lastWatcherActivity = DateTime.MinValue;
         private DateTime _startedAt = DateTime.MinValue;
         private DateTime _lastAdvRestart = DateTime.MinValue;
         private DateTime _holdUntil = DateTime.MinValue;
         private DateTime _stallSince = DateTime.MinValue;
-        private int _stallRestarts;
         private int _refreshingPinned;
         private const int StallHoldSeconds = 12;
-        private const int MaxStallRestarts = 1;
+        private const int RecoveryIntervalSeconds = 30;
 
         public bool IsScanning { get; private set; }
 
@@ -77,10 +77,13 @@ namespace UnlockServer.Services
             get => _bluetoothType;
             set
             {
-                if (_bluetoothType == value) return;
-                _bluetoothType = value;
-                if (IsScanning)
-                    RestartWatchers("type changed");
+                lock (_scanLock)
+                {
+                    var oldType = EffectiveBluetoothType;
+                    _bluetoothType = value;
+                    if (IsScanning && oldType != EffectiveBluetoothType)
+                        RestartWatchers("type changed", force: true);
+                }
             }
         }
 
@@ -102,9 +105,8 @@ namespace UnlockServer.Services
             get
             {
                 if (HasConnectedPinned()) return true;
-                var last = _lastAdvertisement != DateTime.MinValue ? _lastAdvertisement : DateTime.MinValue;
-                var watcher = _lastWatcherActivity != DateTime.MinValue ? _lastWatcherActivity : DateTime.MinValue;
-                var newest = last > watcher ? last : watcher;
+                // Device enumeration metadata is not proof that BLE advertisements are arriving.
+                var newest = EffectiveBluetoothType == 1 ? _lastWatcherActivity : _lastAdvertisement;
                 if (newest == DateTime.MinValue)
                     return _startedAt != DateTime.MinValue && (DateTime.Now - _startedAt).TotalSeconds < 20;
                 return (DateTime.Now - newest).TotalSeconds <= 20;
@@ -152,10 +154,12 @@ namespace UnlockServer.Services
         public bool IsAddressConnected(string address)
         {
             var n = BluetoothDiscover.NormalizeAddress(address);
-            if (string.IsNullOrEmpty(n)) return false;
+            if (string.IsNullOrEmpty(n) || !IsScanning) return false;
+            bool hasConnectionHandle = false;
 
             if (_heldLe.TryGetValue(n, out var le))
             {
+                hasConnectionHandle = true;
                 try
                 {
                     if (le.ConnectionStatus == BluetoothConnectionStatus.Connected)
@@ -166,6 +170,7 @@ namespace UnlockServer.Services
 
             if (_heldClassic.TryGetValue(n, out var classic))
             {
+                hasConnectionHandle = true;
                 try
                 {
                     if (classic.ConnectionStatus == BluetoothConnectionStatus.Connected)
@@ -174,9 +179,11 @@ namespace UnlockServer.Services
                 catch { }
             }
 
-            return _devices.TryGetValue(n, out var d) && d.IsConnected;
+            return !hasConnectionHandle && _devices.TryGetValue(n, out var d) && d.IsConnected;
         }
 
+        // A bounded presence grace, not the watchdog's retry condition. Silence
+        // may mean the last device really left; recovery continues after grace ends.
         public bool LooksLikeScanStall()
         {
             if (HasConnectedPinned())
@@ -200,35 +207,38 @@ namespace UnlockServer.Services
         private void ClearStall()
         {
             _stallSince = DateTime.MinValue;
-            _stallRestarts = 0;
         }
 
         private void NoteWatcherActivity()
         {
             _lastWatcherActivity = DateTime.Now;
-            ClearStall();
         }
 
-        public void AddScanUser()
+        public void AddScanUser(bool discovery = false)
         {
             lock (_scanLock)
             {
+                if (_isDisposed) throw new ObjectDisposedException(nameof(BluetoothService));
+                var oldType = EffectiveBluetoothType;
                 _scanUsers++;
-                if (!IsScanning)
-                    StartScan();
+                if (discovery) _discoveryUsers++;
+                if (!IsScanning) StartScan();
+                else if (oldType != EffectiveBluetoothType)
+                    RestartWatchers("discovery opened", force: true);
             }
         }
 
-        public void RemoveScanUser()
+        public void RemoveScanUser(bool discovery = false)
         {
             lock (_scanLock)
             {
+                if (_scanUsers == 0 || (discovery && _discoveryUsers == 0)) return;
+                var oldType = EffectiveBluetoothType;
                 _scanUsers--;
-                if (_scanUsers <= 0)
-                {
-                    _scanUsers = 0;
-                    StopScan();
-                }
+                if (discovery) _discoveryUsers--;
+                if (_scanUsers == 0) StopScan();
+                else if (oldType != EffectiveBluetoothType)
+                    RestartWatchers("discovery closed", force: true);
             }
         }
 
@@ -245,65 +255,52 @@ namespace UnlockServer.Services
 
         public void StartScan()
         {
-            if (IsScanning) return;
-
-            try
+            lock (_scanLock)
             {
+                if (IsScanning || _isDisposed) return;
                 StopWatchers();
                 RetainPinnedAndPaired();
                 _startedAt = DateTime.Now;
                 _lastAdvertisement = DateTime.MinValue;
                 _lastWatcherActivity = DateTime.MinValue;
+                _lastAdvRestart = DateTime.MinValue;
                 ClearStall();
-
-                LoadPairedDevices();
+                IsScanning = true;
                 StartWatchersInternal();
+                LoadPairedDevices();
                 AttachPinnedDevices();
-
                 _cleanupTimer.Start();
                 _keepAliveTimer.Start();
-                IsScanning = true;
-                LogHelper.WriteLine($"设备扫描已启动，类型: {TypeLabel(_bluetoothType)}");
-            }
-            catch (Exception ex)
-            {
-                LogHelper.WriteLine($"启动蓝牙扫描失败: {ex.Message}");
-                IsScanning = false;
+                LogHelper.WriteLine($"设备扫描已启动，类型: {TypeLabel(EffectiveBluetoothType)}");
             }
         }
 
         public void StopScan()
         {
-            StopWatchers();
-            ReleaseHeldDevices();
-            _cleanupTimer?.Stop();
-            _keepAliveTimer?.Stop();
-            IsScanning = false;
-            LogHelper.WriteLine("蓝牙扫描已停止");
-        }
-
-        public void RestartWatchers(string reason = "refresh")
-        {
-            if (!IsScanning) return;
             lock (_scanLock)
             {
-                if ((DateTime.Now - _lastAdvRestart).TotalSeconds < 8)
-                    return;
-                if (_stallSince != DateTime.MinValue &&
-                    (DateTime.Now - _stallSince).TotalSeconds >= StallHoldSeconds)
-                    return;
-                _lastAdvRestart = DateTime.Now;
-                _holdUntil = DateTime.Now.AddSeconds(4);
+                IsScanning = false;
+                _cleanupTimer.Stop();
+                _keepAliveTimer.Stop();
+                StopWatchers();
+                ReleaseHeldDevices();
+                foreach (var address in _devices.Keys) SetConnected(address, false);
+                LogHelper.WriteLine("蓝牙扫描已停止");
             }
-            LogHelper.WriteLine($"重启蓝牙扫描: {reason}");
-            try
+        }
+
+        public void RestartWatchers(string reason = "refresh", bool force = false)
+        {
+            lock (_scanLock)
             {
+                if (!IsScanning || _isDisposed) return;
+                if (!force && (DateTime.Now - _lastAdvRestart).TotalSeconds < 8) return;
+                _lastAdvRestart = DateTime.Now;
+                // Repeated recovery must not indefinitely extend presence of an absent device.
+                if (_stallSince == DateTime.MinValue) _holdUntil = DateTime.Now.AddSeconds(4);
+                LogHelper.WriteLine($"重启蓝牙扫描: {reason}");
                 StopWatchers();
                 StartWatchersInternal();
-            }
-            catch (Exception ex)
-            {
-                LogHelper.WriteLine($"重启蓝牙扫描失败: {ex.Message}");
             }
         }
 
@@ -324,7 +321,7 @@ namespace UnlockServer.Services
             return device;
         }
 
-        public BluetoothDeviceModel AddManualDevice(string address, string name = "")
+        public BluetoothDeviceModel AddManualDevice(string address, string name = "", int? type = null)
         {
             var normalized = BluetoothDiscover.NormalizeAddress(address);
             if (string.IsNullOrEmpty(normalized)) return null;
@@ -334,32 +331,32 @@ namespace UnlockServer.Services
                 Name = string.IsNullOrEmpty(name) ? "手动添加" : name,
                 Address = normalized,
                 Rssi = -100,
-                Type = _bluetoothType == 1 ? "Classic" : "BLE",
+                Type = (type ?? _bluetoothType) == 1 ? "Classic" : "BLE",
                 IsPaired = false,
-                LastSeen = DateTime.Now
+                LastSeen = DateTime.MinValue
             };
 
-            _devices.AddOrUpdate(normalized, device, (_, existing) =>
+            device = _devices.AddOrUpdate(normalized, device, (_, existing) =>
             {
-                if (!string.IsNullOrEmpty(name))
-                    existing.Name = name;
-                return existing;
+                var copy = existing.Copy();
+                if (!string.IsNullOrEmpty(name)) copy.Name = name;
+                if (type.HasValue) copy.Type = type == 1 ? "Classic" : "BLE";
+                return copy;
             });
 
-            PinAddress(normalized);
             DeviceDiscovered?.Invoke(this, device);
             return device;
         }
 
         #region 扫描实现
 
-        private DeviceWatcher CreateWatcher(string selector, string type)
+        private DeviceWatcher CreateWatcher(string selector, string type, int generation)
         {
             var watcher = DeviceInformation.CreateWatcher(
                 selector, RequestedProperties, DeviceInformationKind.AssociationEndpoint);
 
-            watcher.Added += (s, info) => OnWatcherAdded(info, type);
-            watcher.Updated += (s, update) => OnWatcherUpdated(update, type);
+            watcher.Added += (s, info) => { if (generation == _watcherGeneration && IsScanning) OnWatcherAdded(info, type); };
+            watcher.Updated += (s, update) => { if (generation == _watcherGeneration && IsScanning) OnWatcherUpdated(update, type); };
             watcher.Removed += (s, update) => { /* 周期性 Removed 忽略 */ };
             watcher.EnumerationCompleted += (s, e) =>
                 LogHelper.WriteLine($"{type} 枚举完成，当前 {_devices.Count} 个设备");
@@ -369,12 +366,16 @@ namespace UnlockServer.Services
 
         private void StartWatchersInternal()
         {
-            if (_bluetoothType == 1 || _bluetoothType == 0)
-                _classicWatcher = CreateWatcher(BluetoothClassicId, "Classic");
-
-            if (_bluetoothType == 2 || _bluetoothType == 0)
+            var generation = _watcherGeneration;
+            if (EffectiveBluetoothType != 2)
             {
-                _leWatcher = CreateWatcher(BluetoothLEId, "BLE");
+                try { _classicWatcher = CreateWatcher(BluetoothClassicId, "Classic", generation); }
+                catch (Exception ex) { LogHelper.WriteLine($"启动经典扫描失败: {ex.Message}"); }
+            }
+            if (EffectiveBluetoothType != 1)
+            {
+                try { _leWatcher = CreateWatcher(BluetoothLEId, "BLE", generation); }
+                catch (Exception ex) { LogHelper.WriteLine($"启动 BLE 枚举失败: {ex.Message}"); }
                 StartAdvertisementWatcher();
             }
         }
@@ -425,44 +426,22 @@ namespace UnlockServer.Services
 
         private void RestartAdvertisementWatcher(string reason)
         {
-            if (_bluetoothType == 1) return;
             lock (_scanLock)
             {
-                if ((DateTime.Now - _lastAdvRestart).TotalSeconds < 8)
-                    return;
-                if (_stallSince != DateTime.MinValue &&
-                    (DateTime.Now - _stallSince).TotalSeconds >= StallHoldSeconds)
-                    return;
-                if (_stallRestarts >= MaxStallRestarts)
-                    return;
-                _stallRestarts++;
+                if (!IsScanning || _isDisposed || EffectiveBluetoothType == 1) return;
+                if ((DateTime.Now - _lastAdvRestart).TotalSeconds < RecoveryIntervalSeconds) return;
                 _lastAdvRestart = DateTime.Now;
-                _holdUntil = DateTime.Now.AddSeconds(4);
-            }
-            LogHelper.WriteLine($"刷新 BLE 广播扫描: {reason}");
-            try
-            {
-                if (_advWatcher != null)
-                {
-                    try
-                    {
-                        _advWatcher.Received -= AdvWatcher_Received;
-                        if (_advWatcher.Status == BluetoothLEAdvertisementWatcherStatus.Started)
-                            _advWatcher.Stop();
-                    }
-                    catch { }
-                    _advWatcher = null;
-                }
+                LogHelper.WriteLine($"恢复 BLE 广播扫描: {reason}");
+                StopAdvertisementWatcher();
                 StartAdvertisementWatcher();
-            }
-            catch (Exception ex)
-            {
-                LogHelper.WriteLine($"刷新广播扫描失败: {ex.Message}");
             }
         }
 
         private void AdvWatcher_Received(BluetoothLEAdvertisementWatcher sender, BluetoothLEAdvertisementReceivedEventArgs args)
         {
+            if (!IsScanning || !ReferenceEquals(sender, _advWatcher)) return;
+            // 127 is the WinRT out-of-range sentinel, not a very strong signal.
+            if (args.RawSignalStrengthInDBm == 127) return;
             _lastAdvertisement = DateTime.Now;
             ClearStall();
             var address = BluetoothDiscover.FormatFromUlong(args.BluetoothAddress);
@@ -479,18 +458,12 @@ namespace UnlockServer.Services
             NoteWatcherActivity();
 
             var isPaired = GetIsPaired(deviceInfo.Properties);
-            short rssi = -100;
-            var hasRssi = TryGetRssi(deviceInfo.Properties, out var parsed);
-            if (hasRssi)
-                rssi = parsed;
-
+            // Added replays Windows' cache after each restart. Only subsequent Classic
+            // RSSI updates or actual BLE packets count as new proximity observations.
+            Upsert(address, deviceInfo.Name, -100, type, isPaired, false);
             if (HasBool(deviceInfo.Properties, IsConnectedProperty))
                 SetConnected(address, GetIsConnected(deviceInfo.Properties));
 
-            var refresh = hasRssi && (IsPinned(address) || IsNewWatcherRssi(address, rssi));
-            if (hasRssi && IsPinned(address))
-                _lastWatcherRssi[address] = rssi;
-            Upsert(address, deviceInfo.Name, rssi, type, isPaired, refresh || IsAddressConnected(address));
         }
 
         private void OnWatcherUpdated(DeviceInformationUpdate update, string type)
@@ -508,26 +481,8 @@ namespace UnlockServer.Services
             if (HasBool(update.Properties, IsConnectedProperty))
                 SetConnected(address, GetIsConnected(update.Properties));
 
-            if (TryGetRssi(update.Properties, out var rssi))
-            {
-                var refresh = IsPinned(address) || IsNewWatcherRssi(address, rssi);
-                if (IsPinned(address))
-                    _lastWatcherRssi[address] = rssi;
-                if (refresh)
-                    Upsert(address, null, rssi, type, false, true);
-            }
-            else if (IsAddressConnected(address))
-            {
-                Upsert(address, null, -50, type, false, true);
-            }
-        }
-
-        private bool IsNewWatcherRssi(string address, short rssi)
-        {
-            if (_lastWatcherRssi.TryGetValue(address, out var prev) && prev == rssi)
-                return false;
-            _lastWatcherRssi[address] = rssi;
-            return true;
+            if (type == "Classic" && TryGetRssi(update.Properties, out var rssi) && rssi < 0 && rssi > -127)
+                Upsert(address, null, rssi, type, false, true);
         }
 
         private bool IsPinned(string address)
@@ -539,9 +494,12 @@ namespace UnlockServer.Services
         {
             if (string.IsNullOrEmpty(address)) return;
             if (_devices.TryGetValue(address, out var device))
-                device.IsConnected = connected;
-            else if (connected)
-                Upsert(address, null, -50, "BLE", true, true);
+                _devices.AddOrUpdate(address, device, (_, current) =>
+                {
+                    var copy = current.Copy();
+                    copy.IsConnected = connected;
+                    return copy;
+                });
         }
 
         private bool HasConnectedPinned()
@@ -556,15 +514,30 @@ namespace UnlockServer.Services
 
         private void KeepAliveTimer_Elapsed(object sender, System.Timers.ElapsedEventArgs e)
         {
-            if (!IsScanning) return;
-            PollHeldConnections();
-            if (_advWatcher != null &&
-                (_advWatcher.Status == BluetoothLEAdvertisementWatcherStatus.Aborted ||
-                 _advWatcher.Status == BluetoothLEAdvertisementWatcherStatus.Stopped) &&
-                LooksLikeScanStall())
+            // Avoid overlapping timer callbacks when a driver is slow.
+            if (!Monitor.TryEnter(_scanLock)) return;
+            try
             {
-                RestartAdvertisementWatcher("watcher stopped");
+                if (!IsScanning || _isDisposed) return;
+                PollHeldConnections();
+                bool enumerationStopped =
+                    (EffectiveBluetoothType != 2 && WatcherStopped(_classicWatcher)) ||
+                    (EffectiveBluetoothType != 1 && WatcherStopped(_leWatcher));
+                if (enumerationStopped && (DateTime.Now - _lastAdvRestart).TotalSeconds >= RecoveryIntervalSeconds)
+                    RestartWatchers("enumeration stopped");
+                if (EffectiveBluetoothType != 1 &&
+                    (_advWatcher == null || _advWatcher.Status == BluetoothLEAdvertisementWatcherStatus.Aborted ||
+                     _advWatcher.Status == BluetoothLEAdvertisementWatcherStatus.Stopped || ScanSilenceSeconds >= 20))
+                    RestartAdvertisementWatcher("stopped or no advertisements");
             }
+            catch (Exception ex) { LogHelper.WriteLine($"蓝牙扫描恢复失败: {ex.Message}"); }
+            finally { Monitor.Exit(_scanLock); }
+        }
+
+        private static bool WatcherStopped(DeviceWatcher watcher)
+        {
+            return watcher == null || watcher.Status == DeviceWatcherStatus.Aborted ||
+                   watcher.Status == DeviceWatcherStatus.Stopped;
         }
 
         private void PollHeldConnections()
@@ -576,7 +549,7 @@ namespace UnlockServer.Services
                     var connected = kv.Value.ConnectionStatus == BluetoothConnectionStatus.Connected;
                     SetConnected(kv.Key, connected);
                     if (connected)
-                        Upsert(kv.Key, kv.Value.Name, HeldRssi(kv.Key), "BLE", true, true);
+                        Upsert(kv.Key, kv.Value.Name, -100, "BLE", true, false);
                 }
                 catch { }
             }
@@ -588,17 +561,10 @@ namespace UnlockServer.Services
                     var connected = kv.Value.ConnectionStatus == BluetoothConnectionStatus.Connected;
                     SetConnected(kv.Key, connected);
                     if (connected)
-                        Upsert(kv.Key, kv.Value.Name, HeldRssi(kv.Key), "Classic", true, true);
+                        Upsert(kv.Key, kv.Value.Name, -100, "Classic", true, false);
                 }
                 catch { }
             }
-        }
-
-        private short HeldRssi(string address)
-        {
-            if (_devices.TryGetValue(address, out var existing) && existing.Rssi > -100)
-                return existing.Rssi;
-            return -50;
         }
 
         private void AttachPinnedDevices()
@@ -636,18 +602,17 @@ namespace UnlockServer.Services
 
                 var dev = await BluetoothLEDevice.FromIdAsync(info.Id).AsTask().ConfigureAwait(false);
                 if (dev == null) continue;
-                if (!_heldLe.TryAdd(address, dev))
+                lock (_scanLock)
                 {
-                    dev.Dispose();
-                    continue;
+                    if (!IsScanning || !IsPinned(address) || !_heldLe.TryAdd(address, dev))
+                    {
+                        dev.Dispose();
+                        continue;
+                    }
+                    dev.ConnectionStatusChanged += OnHeldLeConnectionChanged;
+                    Upsert(address, dev.Name, -100, "BLE", true, false);
+                    SetConnected(address, dev.ConnectionStatus == BluetoothConnectionStatus.Connected);
                 }
-
-                dev.ConnectionStatusChanged += OnHeldLeConnectionChanged;
-                LogHelper.WriteLine($"已监听 BLE 连接: {dev.Name}[{address}] {dev.ConnectionStatus}");
-                var connected = dev.ConnectionStatus == BluetoothConnectionStatus.Connected;
-                SetConnected(address, connected);
-                if (connected)
-                    Upsert(address, dev.Name, -50, "BLE", true, true);
             }
         }
 
@@ -663,18 +628,17 @@ namespace UnlockServer.Services
 
                 var dev = await BluetoothDevice.FromIdAsync(info.Id).AsTask().ConfigureAwait(false);
                 if (dev == null) continue;
-                if (!_heldClassic.TryAdd(address, dev))
+                lock (_scanLock)
                 {
-                    dev.Dispose();
-                    continue;
+                    if (!IsScanning || !IsPinned(address) || !_heldClassic.TryAdd(address, dev))
+                    {
+                        dev.Dispose();
+                        continue;
+                    }
+                    dev.ConnectionStatusChanged += OnHeldClassicConnectionChanged;
+                    Upsert(address, dev.Name, -100, "Classic", true, false);
+                    SetConnected(address, dev.ConnectionStatus == BluetoothConnectionStatus.Connected);
                 }
-
-                dev.ConnectionStatusChanged += OnHeldClassicConnectionChanged;
-                LogHelper.WriteLine($"已监听经典蓝牙连接: {dev.Name}[{address}] {dev.ConnectionStatus}");
-                var connected = dev.ConnectionStatus == BluetoothConnectionStatus.Connected;
-                SetConnected(address, connected);
-                if (connected)
-                    Upsert(address, dev.Name, -50, "Classic", true, true);
             }
         }
 
@@ -685,7 +649,7 @@ namespace UnlockServer.Services
             var connected = sender.ConnectionStatus == BluetoothConnectionStatus.Connected;
             SetConnected(address, connected);
             if (connected)
-                Upsert(address, sender.Name, -50, "BLE", true, true);
+                Upsert(address, sender.Name, -100, "BLE", true, false);
             LogHelper.WriteLine($"BLE 连接变化: {address} {(connected ? "已连接" : "已断开")}");
         }
 
@@ -696,7 +660,7 @@ namespace UnlockServer.Services
             var connected = sender.ConnectionStatus == BluetoothConnectionStatus.Connected;
             SetConnected(address, connected);
             if (connected)
-                Upsert(address, sender.Name, -50, "Classic", true, true);
+                Upsert(address, sender.Name, -100, "Classic", true, false);
             LogHelper.WriteLine($"经典蓝牙连接变化: {address} {(connected ? "已连接" : "已断开")}");
         }
 
@@ -724,6 +688,7 @@ namespace UnlockServer.Services
 
         private void ReleaseHeldLe(string address)
         {
+            SetConnected(address, false);
             if (!_heldLe.TryRemove(address, out var dev) || dev == null) return;
             try { dev.ConnectionStatusChanged -= OnHeldLeConnectionChanged; } catch { }
             try { dev.Dispose(); } catch { }
@@ -731,6 +696,7 @@ namespace UnlockServer.Services
 
         private void ReleaseHeldClassic(string address)
         {
+            SetConnected(address, false);
             if (!_heldClassic.TryRemove(address, out var dev) || dev == null) return;
             try { dev.ConnectionStatusChanged -= OnHeldClassicConnectionChanged; } catch { }
             try { dev.Dispose(); } catch { }
@@ -749,8 +715,9 @@ namespace UnlockServer.Services
                     IsPaired = isPaired,
                     LastSeen = refreshSeen ? DateTime.Now : DateTime.MinValue
                 },
-                (_, existing) =>
+                (_, previous) =>
                 {
+                    var existing = previous.Copy();
                     if (!string.IsNullOrEmpty(name))
                         existing.Name = name;
                     if (rssi > -100)
@@ -759,7 +726,7 @@ namespace UnlockServer.Services
                         existing.IsPaired = true;
                     if (refreshSeen)
                         existing.LastSeen = DateTime.Now;
-                    if (!string.IsNullOrEmpty(type))
+                    if (!string.IsNullOrEmpty(type) && (refreshSeen || existing.LastSeen == DateTime.MinValue))
                         existing.Type = type;
                     if (IsAddressConnected(address))
                         existing.IsConnected = true;
@@ -783,9 +750,9 @@ namespace UnlockServer.Services
             {
                 try
                 {
-                    if (_bluetoothType == 1 || _bluetoothType == 0)
+                    if (EffectiveBluetoothType != 2)
                         LoadClassicPaired();
-                    if (_bluetoothType == 2 || _bluetoothType == 0)
+                    if (EffectiveBluetoothType != 1)
                         LoadBlePaired();
                 }
                 catch (Exception ex)
@@ -873,20 +840,24 @@ namespace UnlockServer.Services
 
         private void StopWatchers()
         {
+            Interlocked.Increment(ref _watcherGeneration);
             StopOneWatcher(ref _classicWatcher);
             StopOneWatcher(ref _leWatcher);
 
-            if (_advWatcher != null)
+            StopAdvertisementWatcher();
+        }
+
+        private void StopAdvertisementWatcher()
+        {
+            var watcher = _advWatcher;
+            _advWatcher = null;
+            if (watcher == null) return;
+            try
             {
-                try
-                {
-                    _advWatcher.Received -= AdvWatcher_Received;
-                    if (_advWatcher.Status == BluetoothLEAdvertisementWatcherStatus.Started)
-                        _advWatcher.Stop();
-                }
-                catch { }
-                _advWatcher = null;
+                watcher.Received -= AdvWatcher_Received;
+                if (watcher.Status == BluetoothLEAdvertisementWatcherStatus.Started) watcher.Stop();
             }
+            catch { }
         }
 
         private static void StopOneWatcher(ref DeviceWatcher watcher)

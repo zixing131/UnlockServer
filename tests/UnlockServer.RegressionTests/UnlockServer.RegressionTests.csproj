@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <NoWarn>CS0067;CS0414</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Exercise production decision/UI code with deterministic platform doubles.
+         No Bluetooth hardware, credentials or real LockWorkStation calls. -->
+    <Compile Include="../../UnlockServer.Wpf/Utils/UnlockManager.cs" Link="UnlockManager.cs" />
+    <Compile Include="../../UnlockServer.Wpf/ViewModels/DeviceListViewModel.cs" Link="DeviceListViewModel.cs" />
+    <Compile Include="../../UnlockServer.Wpf/ViewModels/ViewModelBase.cs" Link="ViewModelBase.cs" />
+    <Compile Include="../../UnlockServer.Wpf/ViewModels/RelayCommand.cs" Link="RelayCommand.cs" />
+    <Compile Include="../../UnlockServer.Wpf/Models/BluetoothDeviceModel.cs" Link="BluetoothDeviceModel.cs" />
+    <Compile Include="../../UnlockServer.Wpf/Models/BoundDevice.cs" Link="BoundDevice.cs" />
+    <Compile Include="PlatformDoubles.cs" />
+    <Compile Include="Program.cs" />
+  </ItemGroup>
+</Project>

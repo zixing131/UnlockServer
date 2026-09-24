@@ -8,6 +8,15 @@ namespace UnlockServer.Models
     /// </summary>
     public class BluetoothDeviceModel : ViewModelBase
     {
+        public BluetoothDeviceModel Copy()
+        {
+            return new BluetoothDeviceModel
+            {
+                Name = Name, Address = Address, Rssi = Rssi, Type = Type,
+                IsPaired = IsPaired, IsConnected = IsConnected, LastSeen = LastSeen
+            };
+        }
+
         private string _name;
         private string _address;
         private short _rssi;
@@ -23,7 +32,10 @@ namespace UnlockServer.Models
         public string Name
         {
             get => _name;
-            set => SetProperty(ref _name, value);
+            set
+            {
+                if (SetProperty(ref _name, value)) OnPropertyChanged(nameof(DisplayName));
+            }
         }
 
         /// <summary>

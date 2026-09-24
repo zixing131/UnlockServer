@@ -37,7 +37,8 @@ namespace UnlockServer
 
         private readonly List<BoundDevice> _bound = new List<BoundDevice>();
         private readonly Dictionary<string, bool> _inRangeByAddress = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
-        private bool isrunning;
+        private CancellationTokenSource _monitorCancellation;
+        private bool _ownsScan;
 
         private int locktimecount;
         private bool isunlockfail;
@@ -67,7 +68,6 @@ namespace UnlockServer
         private DateTime _lastTickLog = DateTime.MinValue;
         private bool _combinedInRange;
         private volatile bool _unlockTestRunning;
-        private const int ScanOutageGraceSeconds = 40;
         private DateTime _lastSoftwareLockTime = DateTime.MinValue;
         private DateTime _suppressLockUntil = DateTime.MinValue;
         private enum PendingKind { None, Lock, Unlock }
@@ -76,7 +76,11 @@ namespace UnlockServer
         private bool _userCancelledLock;
         private bool _userCancelledUnlock;
         private bool _seenNearbyAfterManualUnlock;
+        // Toast state belongs to the UI thread. UI callbacks only post a cancellation
+        // token; only the monitor executes actions after checking current presence.
         private ActionToast _actionToast;
+        private int _pendingVersion;
+        private int _cancelVersion;
         public Action<bool> UnlockTestFinished;
 
         public static bool IsValidBluetoothAddress(string address)
@@ -87,28 +91,32 @@ namespace UnlockServer
 
         public void SetBoundDevices(IEnumerable<BoundDevice> devices)
         {
-            var previous = new Dictionary<string, bool>(_inRangeByAddress, StringComparer.OrdinalIgnoreCase);
-            _bound.Clear();
-            _inRangeByAddress.Clear();
-            if (devices != null)
+            lock (lockLock)
             {
-                foreach (var d in devices)
+                DismissPending();
+                var previous = new Dictionary<string, bool>(_inRangeByAddress, StringComparer.OrdinalIgnoreCase);
+                _bound.Clear();
+                _inRangeByAddress.Clear();
+                if (devices != null)
                 {
-                    if (d == null || string.IsNullOrWhiteSpace(d.Address)) continue;
-                    d.Address = BluetoothDiscover.NormalizeAddress(d.Address) ?? d.Address;
-                    _bound.Add(d);
-                    if (previous.TryGetValue(d.Address, out var wasInRange))
-                        _inRangeByAddress[d.Address] = wasInRange;
+                    foreach (var d in devices)
+                    {
+                        if (d == null || string.IsNullOrWhiteSpace(d.Address)) continue;
+                        d.Address = BluetoothDiscover.NormalizeAddress(d.Address) ?? d.Address;
+                        _bound.Add(d);
+                        if (previous.TryGetValue(d.Address, out var wasInRange))
+                            _inRangeByAddress[d.Address] = wasInRange;
+                    }
                 }
-            }
 
-            bletype = ResolveScanType();
-            if (_bluetooth != null)
-            {
-                _bluetooth.BluetoothType = bletype;
-                _bluetooth.PinAddresses(_bound.Where(x => x.Enabled).Select(x => x.Address));
+                bletype = ResolveScanType();
+                if (_bluetooth != null)
+                {
+                    _bluetooth.BluetoothType = bletype;
+                    _bluetooth.PinAddresses(_bound.Where(x => x.Enabled).Select(x => x.Address));
+                }
+                LogHelper.WriteLine($"绑定设备 {_bound.Count} 台，扫描模式 {bletype}");
             }
-            LogHelper.WriteLine($"绑定设备 {_bound.Count} 台，扫描模式 {bletype}");
         }
 
         public void setunlockaddress(string address)
@@ -122,6 +130,7 @@ namespace UnlockServer
 
         public void Start()
         {
+            if (_monitorCancellation != null) return;
             sessionSwitchClass = new SessionSwitchClass();
             try
             {
@@ -136,68 +145,97 @@ namespace UnlockServer
                 };
                 sessionSwitchClass.SessionUnlockAction = () =>
                 {
-                    _seenNearbyAfterManualUnlock = false;
+                    lock (lockLock)
+                    {
+                        _seenNearbyAfterManualUnlock = false;
+                        DismissPending();
+                        HandleUserUnlockAfterSoftwareLock();
+                    }
                     _bluetooth?.NotifySessionUnlocked();
-                    HandleUserUnlockAfterSoftwareLock();
                 };
-                _bluetooth.AddScanUser();
 
                 var radio = BluetoothRadio.Default;
                 if (radio == null)
                 {
-                    Application.Current?.Dispatcher?.Invoke(() => MessageDialog.ShowError("没有找到本机蓝牙设备！"));
-                    return;
+                    sessionSwitchClass.Close();
+                    throw new InvalidOperationException("没有找到本机蓝牙设备！");
                 }
 
-                Task.Delay(2000).ContinueWith(r =>
+                _bluetooth.AddScanUser();
+                _ownsScan = true;
+                var cancellation = new CancellationTokenSource();
+                _monitorCancellation = cancellation;
+                var token = cancellation.Token;
+                Task.Run(async () =>
                 {
-                    isrunning = true;
-                    while (isrunning)
+                    try
                     {
-                        try { Tick(); }
-                        catch (Exception ex) { LogHelper.WriteLine($"监控循环错误: {ex.Message}"); }
-                        Thread.Sleep(1000);
+                        await Task.Delay(2000, token).ConfigureAwait(false);
+                        while (!token.IsCancellationRequested)
+                        {
+                            lock (lockLock)
+                            {
+                                if (token.IsCancellationRequested) break;
+                                try { Tick(); }
+                                catch (Exception ex) { LogHelper.WriteLine($"监控循环错误: {ex.Message}"); }
+                            }
+                            await Task.Delay(1000, token).ConfigureAwait(false);
+                        }
                     }
-                }, TaskContinuationOptions.LongRunning);
+                    catch (OperationCanceledException) { }
+                    finally { cancellation.Dispose(); }
+                });
 
                 LogHelper.WriteLine("解锁监控已启动");
             }
             catch (Exception ex)
             {
                 LogHelper.WriteLine($"启动蓝牙监控失败: {ex.Message}");
-                Application.Current?.Dispatcher?.Invoke(() =>
-                    MessageDialog.ShowError("启动蓝牙监控失败，可能没有蓝牙硬件或者不兼容！"));
+                Stop();
+                throw;
             }
         }
 
         public void Stop()
         {
-            isrunning = false;
-            DismissPending();
-            sessionSwitchClass?.Close();
-            _bluetooth?.RemoveScanUser();
-            LogHelper.WriteLine("解锁监控已停止");
+            lock (lockLock)
+            {
+                _monitorCancellation?.Cancel();
+                _monitorCancellation = null;
+                DismissPending();
+                sessionSwitchClass?.Close();
+                if (_ownsScan)
+                {
+                    _ownsScan = false;
+                    _bluetooth?.RemoveScanUser();
+                }
+                LogHelper.WriteLine("解锁监控已停止");
+            }
         }
 
         public void ApplyRuntimeSettings(int threshold, int hysteresis, int timeout, int lockSec, int unlockSec,
             int warnSec, bool autoLock, bool autoUnlock, bool manualLock, bool manualUnlock, bool requireAll, bool localUnlock,
             bool onlyIdle, int idleSec, bool relockWhenSeen)
         {
-            rssiyuzhi = threshold;
-            hysteresisDb = hysteresis < 0 ? 0 : hysteresis;
-            presenceTimeout = timeout;
-            lockDelay = lockSec;
-            unlockDelay = unlockSec;
-            actionWarnSeconds = warnSec < 0 ? 0 : warnSec;
-            isautolock = autoLock;
-            isautounlock = autoUnlock;
-            manuallock = manualLock;
-            manualunlock = manualUnlock;
-            lockWhenSeen = relockWhenSeen;
-            requireAllDevices = requireAll;
-            useLocalUnlock = localUnlock;
-            lockOnlyWhenIdle = onlyIdle;
-            idleLockSeconds = idleSec < 1 ? 1 : idleSec;
+            lock (lockLock)
+            {
+                DismissPending();
+                rssiyuzhi = threshold;
+                hysteresisDb = hysteresis < 0 ? 0 : hysteresis;
+                presenceTimeout = timeout;
+                lockDelay = lockSec;
+                unlockDelay = unlockSec;
+                actionWarnSeconds = warnSec < 0 ? 0 : warnSec;
+                isautolock = autoLock;
+                isautounlock = autoUnlock;
+                manuallock = manualLock;
+                manualunlock = manualUnlock;
+                lockWhenSeen = relockWhenSeen;
+                requireAllDevices = requireAll;
+                useLocalUnlock = localUnlock;
+                lockOnlyWhenIdle = onlyIdle;
+                idleLockSeconds = idleSec < 1 ? 1 : idleSec;
+            }
         }
 
         private int ResolveScanType()
@@ -223,11 +261,10 @@ namespace UnlockServer
 
         private void Tick()
         {
-            var enabled = _bound.Where(d => d.Enabled).ToList();
-            if (enabled.Count == 0) return;
-
             lock (lockLock)
             {
+                var enabled = _bound.Where(d => d.Enabled).ToList();
+                if (enabled.Count == 0) { DismissPending(); return; }
                 bool islocked = (sessionSwitchClass != null && sessionSwitchClass.IsLocked)
                     || WanClient.IsSessionLocked();
                 if (!islocked) isunlockfail = false;
@@ -241,7 +278,7 @@ namespace UnlockServer
                 if (_bluetooth == null) return;
 
                 var snapshot = _bluetooth.GetDevices();
-                bool scanHealthy = _bluetooth.IsAdvertisementAlive;
+                bool scanHealthy = !_bluetooth.LooksLikeScanStall();
                 int scanSilence = _bluetooth.ScanSilenceSeconds;
                 int inRangeCount = 0;
                 int freshInRangeCount = 0;
@@ -256,12 +293,9 @@ namespace UnlockServer
                     short rssi = -100;
                     bool real = false;
                     string status;
-                    bool connected = found?.IsConnected == true || _bluetooth.IsAddressConnected(bound.Address);
+                    bool connected = _bluetooth.IsAddressConnected(bound.Address);
 
-                    bool holdPresence = islocked
-                        || connected
-                        || _bluetooth.IsRefreshing
-                        || _bluetooth.LooksLikeScanStall();
+                    bool holdPresence = !islocked && !scanHealthy;
                     bool freshHere = false;
 
                     if (connected)
@@ -359,7 +393,7 @@ namespace UnlockServer
                 if (_unlockTestRunning)
                     return;
 
-                bool clickHere = freshInRange || (isInRange && !scanHealthy);
+                bool clickHere = freshInRange;
 
                 if (freshInRange)
                     LocalUnlock.ClearUnlockHint();
@@ -370,8 +404,17 @@ namespace UnlockServer
                     return;
                 }
 
-                if (!isautolock && !isautounlock)
+                if (_pending != PendingKind.None &&
+                    Volatile.Read(ref _cancelVersion) == Volatile.Read(ref _pendingVersion))
+                {
+                    UserCancelPending();
                     return;
+                }
+                if (!isautolock && !isautounlock)
+                {
+                    DismissPending();
+                    return;
+                }
 
                 if (LocalUnlock.ConsumeUnlockCancel())
                 {
@@ -380,11 +423,6 @@ namespace UnlockServer
                         UserCancelPending();
                         return;
                     }
-                }
-                if (_pending != PendingKind.None && DateTime.Now >= _pendingUntil)
-                {
-                    ExecutePending(_pending);
-                    return;
                 }
 
                 if (isInRange)
@@ -401,7 +439,7 @@ namespace UnlockServer
                         LogHelper.WriteLine("设备进入范围，开始解锁计时");
                     }
 
-                    if (islocked && isautounlock)
+                    if (islocked && isautounlock && freshInRange)
                     {
                         if (manuallock && !sessionSwitchClass.isLockBySoft)
                         {
@@ -429,6 +467,7 @@ namespace UnlockServer
                 }
                 else if (!scanHealthy)
                 {
+                    DismissPending();
                     if (shouldLog) LogHelper.WriteLine("蓝牙扫描中断，暂不按离开处理");
                 }
                 else
@@ -591,7 +630,11 @@ namespace UnlockServer
 
         private void RequestAction(PendingKind kind)
         {
-            if (_pending == kind) return;
+            if (_pending == kind)
+            {
+                if (DateTime.Now >= _pendingUntil) ExecutePending(kind);
+                return;
+            }
             if (_pending != PendingKind.None)
                 DismissPending();
 
@@ -602,6 +645,7 @@ namespace UnlockServer
             }
 
             _pending = kind;
+            var version = Interlocked.Increment(ref _pendingVersion);
             _pendingUntil = DateTime.Now.AddSeconds(actionWarnSeconds);
             var title = kind == PendingKind.Lock ? "即将锁屏" : "即将解锁";
             LogHelper.WriteLine($"{title}，{actionWarnSeconds} 秒内可取消");
@@ -616,33 +660,19 @@ namespace UnlockServer
 
             Application.Current?.Dispatcher?.BeginInvoke(new Action(() =>
             {
-                lock (lockLock)
-                {
-                    if (_pending != kind) return;
-                    _actionToast?.Dismiss();
-                    _actionToast = ToastService.ShowAction(
-                        title,
-                        "点击这条提示可取消本次操作",
-                        actionWarnSeconds,
-                        () =>
-                        {
-                            lock (lockLock) UserCancelPending();
-                        },
-                        () =>
-                        {
-                            lock (lockLock) ExecutePending(kind);
-                        });
-                }
+                if (Volatile.Read(ref _pendingVersion) != version) return;
+                _actionToast?.Dismiss();
+                _actionToast = ToastService.ShowAction(
+                    title, "点击这条提示可取消本次操作", actionWarnSeconds,
+                    () => Interlocked.Exchange(ref _cancelVersion, version),
+                    () => { /* The monitor checks presence and executes on its next tick. */ });
             }));
         }
 
         private void ExecutePending(PendingKind kind)
         {
             if (_pending != kind) return;
-            _pending = PendingKind.None;
-            _pendingUntil = DateTime.MinValue;
-            _actionToast = null;
-            LocalUnlock.ClearUnlockWarn();
+            DismissPending();
             ExecuteAction(kind);
         }
 
@@ -674,10 +704,7 @@ namespace UnlockServer
         {
             if (_pending == PendingKind.None) return;
             var kind = _pending;
-            _pending = PendingKind.None;
-            _pendingUntil = DateTime.MinValue;
-            _actionToast = null;
-            LocalUnlock.ClearUnlockWarn();
+            DismissPending();
             if (kind == PendingKind.Lock)
             {
                 _userCancelledLock = true;
@@ -698,13 +725,17 @@ namespace UnlockServer
 
         private void DismissPending()
         {
-            if (_pending == PendingKind.None && _actionToast == null) return;
+            if (_pending == PendingKind.None) return;
             _pending = PendingKind.None;
             _pendingUntil = DateTime.MinValue;
-            var toast = _actionToast;
-            _actionToast = null;
+            var version = Interlocked.Increment(ref _pendingVersion);
             LocalUnlock.ClearUnlockWarn();
-            Application.Current?.Dispatcher?.BeginInvoke(new Action(() => toast?.Dismiss()));
+            Application.Current?.Dispatcher?.BeginInvoke(new Action(() =>
+            {
+                if (Volatile.Read(ref _pendingVersion) != version) return;
+                _actionToast?.Dismiss();
+                _actionToast = null;
+            }));
         }
 
         private void DoLock()

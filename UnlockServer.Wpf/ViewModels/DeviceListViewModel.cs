@@ -1,7 +1,6 @@
 using System;
 using System.Collections.ObjectModel;
 using System.Linq;
-using System.Threading;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
@@ -21,7 +20,7 @@ namespace UnlockServer.ViewModels
 
         private readonly BluetoothService _bluetoothService;
         private readonly DispatcherTimer _refreshTimer;
-        private readonly SynchronizationContext _syncContext;
+        private bool _disposed;
 
         private ObservableCollection<BluetoothDeviceModel> _devices;
         private BluetoothDeviceModel _selectedDevice;
@@ -69,7 +68,7 @@ namespace UnlockServer.ViewModels
                     OnPropertyChanged(nameof(IsClassicBluetooth));
                     OnPropertyChanged(nameof(IsBLE));
                     OnPropertyChanged(nameof(IsAllBluetooth));
-                    RestartScanning();
+                    FilterDevices();
                 }
             }
         }
@@ -162,19 +161,11 @@ namespace UnlockServer.ViewModels
 
         public DeviceListViewModel(int initialBluetoothType = 1, string initialAddress = "")
         {
-            _syncContext = SynchronizationContext.Current;
             _devices = new ObservableCollection<BluetoothDeviceModel>();
             _bluetoothType = initialBluetoothType;
             _selectedAddress = initialAddress;
 
             _bluetoothService = BluetoothService.Shared;
-            _bluetoothService.BluetoothType = _bluetoothType;
-            if (!string.IsNullOrEmpty(_selectedAddress))
-                _bluetoothService.PinAddress(_selectedAddress);
-            _bluetoothService.DeviceDiscovered += BluetoothService_DeviceDiscovered;
-            _bluetoothService.DeviceUpdated += BluetoothService_DeviceUpdated;
-            _bluetoothService.DeviceLost += BluetoothService_DeviceLost;
-
             // 初始化定时器
             _refreshTimer = new DispatcherTimer
             {
@@ -194,10 +185,10 @@ namespace UnlockServer.ViewModels
 
         public void StartScanning()
         {
+            if (_disposed || IsScanning) return;
             try
             {
-                _bluetoothService.BluetoothType = _bluetoothType;
-                _bluetoothService.AddScanUser();
+                _bluetoothService.AddScanUser(discovery: true);
                 _refreshTimer.Start();
                 IsScanning = true;
             }
@@ -210,11 +201,12 @@ namespace UnlockServer.ViewModels
 
         public void StopScanning()
         {
+            if (!IsScanning) return;
             try
             {
                 _refreshTimer.Stop();
-                _bluetoothService.RemoveScanUser();
                 IsScanning = false;
+                _bluetoothService.RemoveScanUser(discovery: true);
             }
             catch (Exception ex)
             {
@@ -259,7 +251,7 @@ namespace UnlockServer.ViewModels
                 return;
             }
 
-            var device = _bluetoothService.AddManualDevice(ManualAddress);
+            var device = _bluetoothService.AddManualDevice(ManualAddress, type: _bluetoothType);
             if (device == null)
             {
                 MessageDialog.ShowError("无法添加该地址");
@@ -276,21 +268,6 @@ namespace UnlockServer.ViewModels
 
         #region 事件处理
 
-        private void BluetoothService_DeviceDiscovered(object sender, BluetoothDeviceModel device)
-        {
-            _syncContext?.Post(_ => AddOrUpdateDevice(device), null);
-        }
-
-        private void BluetoothService_DeviceUpdated(object sender, BluetoothDeviceModel device)
-        {
-            _syncContext?.Post(_ => UpdateDevice(device), null);
-        }
-
-        private void BluetoothService_DeviceLost(object sender, string address)
-        {
-            _syncContext?.Post(_ => RemoveDevice(address), null);
-        }
-
         private void RefreshTimer_Tick(object sender, EventArgs e)
         {
             RefreshDeviceList();
@@ -303,7 +280,6 @@ namespace UnlockServer.ViewModels
         private void RestartScanning()
         {
             Devices.Clear();
-            _bluetoothService.BluetoothType = _bluetoothType;
             if (_bluetoothService.IsScanning)
                 _bluetoothService.RestartWatchers("device list refresh");
             else
@@ -312,8 +288,13 @@ namespace UnlockServer.ViewModels
 
         private void RefreshDeviceList()
         {
-            var allDevices = _bluetoothService.GetDevices();
-            
+            if (_disposed) return;
+            var allDevices = _bluetoothService.GetDevices().Where(MatchesSearch).ToList();
+            var addresses = new System.Collections.Generic.HashSet<string>(
+                allDevices.Select(d => d.Address), StringComparer.OrdinalIgnoreCase);
+            foreach (var old in Devices.Where(d => !addresses.Contains(d.Address)).ToList())
+                Devices.Remove(old);
+
             foreach (var device in allDevices)
             {
                 AddOrUpdateDevice(device);
@@ -365,6 +346,7 @@ namespace UnlockServer.ViewModels
                 existing.Rssi = device.Rssi;
                 existing.Type = device.Type;
                 existing.LastSeen = device.LastSeen;
+                existing.IsConnected = device.IsConnected;
                 if (device.IsPaired)
                     existing.IsPaired = true;
             }
@@ -373,48 +355,23 @@ namespace UnlockServer.ViewModels
                 // 检查是否符合搜索条件
                 if (MatchesSearch(device))
                 {
-                    Devices.Add(device);
+                    // UI owns its models; scanner updates never raise WPF notifications.
+                    Devices.Add(device.Copy());
                     OnPropertyChanged(nameof(ShowScanningHint));
                 }
             }
         }
 
-        private void UpdateDevice(BluetoothDeviceModel device)
-        {
-            var existing = Devices.FirstOrDefault(d => 
-                d.Address.Equals(device.Address, StringComparison.OrdinalIgnoreCase));
-
-            if (existing != null)
-            {
-                existing.Rssi = device.Rssi;
-                existing.LastSeen = device.LastSeen;
-            }
-        }
-
-        private void RemoveDevice(string address)
-        {
-            var device = Devices.FirstOrDefault(d => 
-                d.Address.Equals(address, StringComparison.OrdinalIgnoreCase));
-
-            if (device != null)
-            {
-                Devices.Remove(device);
-            }
-        }
-
         private void FilterDevices()
         {
-            var allDevices = _bluetoothService.GetDevices();
-            Devices.Clear();
-
-            foreach (var device in allDevices.Where(MatchesSearch))
-            {
-                Devices.Add(device);
-            }
+            RefreshDeviceList();
+            OnPropertyChanged(nameof(ShowScanningHint));
         }
 
         private bool MatchesSearch(BluetoothDeviceModel device)
         {
+            if (_bluetoothType == 1 && device.Type != "Classic") return false;
+            if (_bluetoothType == 2 && device.Type != "BLE") return false;
             if (string.IsNullOrWhiteSpace(_searchText))
                 return true;
 
@@ -435,10 +392,10 @@ namespace UnlockServer.ViewModels
 
         public void Dispose()
         {
+            if (_disposed) return;
             StopScanning();
-            _bluetoothService.DeviceDiscovered -= BluetoothService_DeviceDiscovered;
-            _bluetoothService.DeviceUpdated -= BluetoothService_DeviceUpdated;
-            _bluetoothService.DeviceLost -= BluetoothService_DeviceLost;
+            _disposed = true;
+            _refreshTimer.Tick -= RefreshTimer_Tick;
         }
 
         #endregion

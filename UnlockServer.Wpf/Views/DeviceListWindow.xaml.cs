@@ -38,7 +38,6 @@ namespace UnlockServer.Views
 
         private void Window_Closing(object sender, CancelEventArgs e)
         {
-            _viewModel.StopScanning();
             _viewModel.OnDeviceSelected -= ViewModel_OnDeviceSelected;
             _viewModel.Dispose();
         }

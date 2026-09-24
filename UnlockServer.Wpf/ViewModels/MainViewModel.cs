@@ -26,6 +26,7 @@ namespace UnlockServer.ViewModels
         private int _selectedTab;
         private string _localUnlockStatus = "尚未安装本机解锁组件";
         private readonly DispatcherTimer _autoSaveTimer;
+        private volatile int _monitorVersion;
         private bool _suspendAutoSave;
 
         public ObservableCollection<BoundDevice> BoundDevices { get; } = new ObservableCollection<BoundDevice>();
@@ -547,6 +548,7 @@ namespace UnlockServer.ViewModels
 
         private void StartMonitoring()
         {
+            _monitorVersion++;
             try
             {
                 if (_unlockManager == null)
@@ -566,6 +568,7 @@ namespace UnlockServer.ViewModels
 
         private void StopMonitoring()
         {
+            _monitorVersion++;
             try
             {
                 _unlockManager?.Stop();
@@ -588,6 +591,7 @@ namespace UnlockServer.ViewModels
             if (!IsMonitoring) return;
             if (restartIfNeeded || _unlockManager.bletype != oldType)
             {
+                _monitorVersion++;
                 _unlockManager.Stop();
                 _unlockManager.Start();
             }
@@ -595,24 +599,28 @@ namespace UnlockServer.ViewModels
 
         private void UpdateRssiDisplay(string displayText, bool inRange)
         {
-            Application.Current?.Dispatcher?.Invoke(() =>
+            var version = _monitorVersion;
+            Application.Current?.Dispatcher?.BeginInvoke(new Action(() =>
             {
+                if (!IsMonitoring || version != _monitorVersion) return;
                 CurrentRssi = displayText;
                 IsDeviceInRange = inRange;
-            });
+            }));
         }
 
         private void UpdateDevicePresence(string address, short rssi, bool inRange, string status)
         {
-            Application.Current?.Dispatcher?.Invoke(() =>
+            var version = _monitorVersion;
+            Application.Current?.Dispatcher?.BeginInvoke(new Action(() =>
             {
+                if (!IsMonitoring || version != _monitorVersion) return;
                 var device = BoundDevices.FirstOrDefault(d =>
                     address.Equals(d.NormalizedAddress, StringComparison.OrdinalIgnoreCase));
                 if (device == null) return;
                 device.Rssi = rssi;
                 device.IsInRange = inRange;
                 device.StatusText = status;
-            });
+            }));
         }
 
         private void ApplySettingsToManager()
